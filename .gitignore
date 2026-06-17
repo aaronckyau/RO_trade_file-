@@ -1,0 +1,10 @@
+outputs/
+*.xlsx
+*.xls
+*.csv
+*.pdf
+*.jpeg
+*.jpg
+*.png
+*.tmp
+*.log

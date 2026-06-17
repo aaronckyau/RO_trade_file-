@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RO 交易指令 PDF 產生器</title>
+    <link rel="stylesheet" href="styles.css?v=20260617no3" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="top-band">
+        <div class="top-copy">
+          <div class="eyebrow">Transaction Compliance Workspace</div>
+          <h1>RO 交易指令 PDF 產生器</h1>
+          <p>上傳交易 Excel、檢視或修改表格，設定簽名與日期後，匯出每頁 20 筆交易的 PDF。</p>
+        </div>
+        <div class="top-actions">
+          <button id="settingsBtn" type="button" class="ghost-btn">設定</button>
+        </div>
+      </section>
+
+      <section id="mainPage" class="page">
+        <div class="section-heading">
+          <div>
+            <h2>交易資料</h2>
+            <p>先載入 Excel，再在下方表格檢查或直接修正交易內容。</p>
+          </div>
+        </div>
+
+        <section class="control-grid compact-controls" aria-label="上傳交易資料">
+          <div class="control-block upload-block">
+            <label for="excelInput">交易 Excel</label>
+            <input id="excelInput" type="file" accept=".xlsx,.xls,.csv" />
+            <div id="fileMeta" class="meta-line">尚未載入檔案。</div>
+          </div>
+        </section>
+
+        <section class="summary-strip" aria-label="摘要">
+          <div>
+            <span class="summary-value" id="rowCount">0</span>
+            <span class="summary-label">交易筆數</span>
+          </div>
+          <div>
+            <span class="summary-value" id="pageCount">0</span>
+            <span class="summary-label">PDF 頁數</span>
+          </div>
+          <div>
+            <span class="summary-value">20</span>
+            <span class="summary-label">每頁交易筆數</span>
+          </div>
+          <button id="downloadPdfBtn" type="button" class="primary-btn" disabled>產生 PDF</button>
+        </section>
+
+        <section class="table-tools" aria-label="表格控制">
+          <div class="pager">
+            <button id="prevPageBtn" type="button" class="ghost-btn" disabled>上一頁</button>
+            <label for="pageSelect">預覽頁面</label>
+            <select id="pageSelect" disabled></select>
+            <button id="nextPageBtn" type="button" class="ghost-btn" disabled>下一頁</button>
+          </div>
+          <div id="statusText" class="status-text">請先上傳 Excel 檔案。</div>
+        </section>
+
+        <section class="table-zone" aria-label="可編輯交易表">
+          <table id="transactionTable">
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+        </section>
+      </section>
+
+      <section id="settingsPage" class="page settings-page hidden" aria-label="設定頁">
+        <div class="settings-header">
+          <div>
+            <h2>簽署設定</h2>
+            <p>這些資料會出現在 PDF 每一頁的簽署區。</p>
+          </div>
+          <button id="backMainBtn" type="button" class="ghost-btn">返回交易表</button>
+        </div>
+
+        <section class="settings-grid">
+          <div class="control-block">
+            <label for="companyInput">基金 / 實體名稱</label>
+            <input id="companyInput" type="text" value="X Squared Capital Management LPF" />
+          </div>
+
+          <div class="control-block">
+            <label for="executedNameInput">執行人</label>
+            <input id="executedNameInput" type="text" placeholder="姓名" />
+            <input id="executedDateInput" type="date" />
+            <input id="executedSigInput" type="file" accept="image/*" />
+            <img id="executedSigPreview" class="signature-preview" alt="執行人簽名預覽" />
+          </div>
+
+          <div class="control-block">
+            <label for="roNameInput">RO 覆核</label>
+            <input id="roNameInput" type="text" placeholder="姓名" />
+            <input id="roDateInput" type="date" />
+            <input id="roSigInput" type="file" accept="image/*" />
+            <img id="roSigPreview" class="signature-preview" alt="RO 簽名預覽" />
+          </div>
+
+          <div class="control-block notes-block">
+            <label for="notesInput">備註</label>
+            <textarea id="notesInput" rows="6" placeholder="可選填簽署表格備註"></textarea>
+          </div>
+        </section>
+
+        <div class="settings-actions">
+          <button id="saveSettingsBtn" type="button" class="primary-btn">儲存並返回交易表</button>
+          <div id="settingsStatus" class="status-text">設定會自動套用到下一次 PDF 匯出。</div>
+        </div>
+      </section>
+    </main>
+
+    <script src="vendor/xlsx.full.min.js"></script>
+    <script src="vendor/jspdf.umd.min.js"></script>
+    <script src="vendor/jspdf.plugin.autotable.min.js"></script>
+    <script src="app.js?v=20260617no3"></script>
+  </body>
+</html>
