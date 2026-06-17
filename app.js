@@ -202,21 +202,51 @@ function updateSummary() {
   els.fileMeta.textContent = state.sourceFile ? `已載入：${state.sourceFile}` : "尚未載入檔案。";
 }
 
+function getTransactionPages() {
+  const groups = [];
+  const byDate = new Map();
+
+  state.transactions.forEach((transaction, index) => {
+    const tradeDate = transaction.tradeDate || "No date";
+    if (!byDate.has(tradeDate)) {
+      const group = { tradeDate, rows: [] };
+      byDate.set(tradeDate, group);
+      groups.push(group);
+    }
+    byDate.get(tradeDate).rows.push({ transaction, index });
+  });
+
+  return groups.flatMap((group) => {
+    const totalParts = Math.ceil(group.rows.length / TRANSACTIONS_PER_PAGE);
+    const pages = [];
+    for (let offset = 0; offset < group.rows.length; offset += TRANSACTIONS_PER_PAGE) {
+      pages.push({
+        tradeDate: group.tradeDate,
+        part: Math.floor(offset / TRANSACTIONS_PER_PAGE) + 1,
+        totalParts,
+        rows: group.rows.slice(offset, offset + TRANSACTIONS_PER_PAGE)
+      });
+    }
+    return pages;
+  });
+}
+
 function getPageCount() {
-  return Math.ceil(state.transactions.length / TRANSACTIONS_PER_PAGE) || 0;
+  return getTransactionPages().length || 0;
 }
 
 function renderPager() {
-  const pages = getPageCount();
+  const transactionPages = getTransactionPages();
+  const pages = transactionPages.length;
   els.pageSelect.innerHTML = "";
-  for (let page = 1; page <= pages; page += 1) {
+  transactionPages.forEach((pageInfo, index) => {
+    const page = index + 1;
     const option = document.createElement("option");
     option.value = String(page);
-    const start = (page - 1) * TRANSACTIONS_PER_PAGE + 1;
-    const end = Math.min(page * TRANSACTIONS_PER_PAGE, state.transactions.length);
-    option.textContent = `第 ${page} 頁：${start}-${end}`;
+    const partLabel = pageInfo.totalParts > 1 ? ` (${pageInfo.part}/${pageInfo.totalParts})` : "";
+    option.textContent = `第 ${page} 頁：${pageInfo.tradeDate}${partLabel}`;
     els.pageSelect.appendChild(option);
-  }
+  });
   els.pageSelect.disabled = pages === 0;
   els.prevPageBtn.disabled = state.page <= 1 || pages === 0;
   els.nextPageBtn.disabled = state.page >= pages || pages === 0;
@@ -242,13 +272,12 @@ function renderTable() {
     return;
   }
 
-  const start = (state.page - 1) * TRANSACTIONS_PER_PAGE;
-  const rows = state.transactions.slice(start, start + TRANSACTIONS_PER_PAGE);
+  const pageInfo = getTransactionPages()[state.page - 1];
+  const rows = pageInfo ? pageInfo.rows : [];
 
   els.thead.innerHTML = `<tr>${FIELDS.map((field) => `<th>${field.label}</th>`).join("")}</tr>`;
-  els.tbody.innerHTML = rows.map((transaction, visibleIndex) => {
-    const sourceIndex = start + visibleIndex;
-    return `<tr>${FIELDS.map((field) => renderCell(transaction, field, sourceIndex)).join("")}</tr>`;
+  els.tbody.innerHTML = rows.map(({ transaction, index }) => {
+    return `<tr>${FIELDS.map((field) => renderCell(transaction, field, index)).join("")}</tr>`;
   }).join("");
 
   els.tbody.querySelectorAll("td[contenteditable='true']").forEach((cell) => {
@@ -274,6 +303,7 @@ function onCellEdit(event) {
   const index = Number(cell.dataset.index);
   const key = cell.dataset.key;
   state.transactions[index][key] = cell.textContent.trim();
+  renderPager();
   renderTable();
   setStatus("表格已更新。PDF 會使用修改後的數值。");
 }
@@ -316,17 +346,17 @@ function generatePdf() {
 
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
-  const pages = getPageCount();
+  const transactionPages = getTransactionPages();
+  const pages = transactionPages.length;
   const company = els.companyInput.value.trim() || "Transaction Order";
   const source = state.sourceFile || "Uploaded Excel";
 
-  for (let page = 1; page <= pages; page += 1) {
+  transactionPages.forEach((pageInfo, index) => {
+    const page = index + 1;
     if (page > 1) doc.addPage("a4", "landscape");
-    const start = (page - 1) * TRANSACTIONS_PER_PAGE;
-    const end = Math.min(page * TRANSACTIONS_PER_PAGE, state.transactions.length);
-    const chunk = state.transactions.slice(start, end);
-    drawPdfPage(doc, { company, source, page, pages, start, end, chunk });
-  }
+    const chunk = pageInfo.rows.map(({ transaction }) => transaction);
+    drawPdfPage(doc, { company, source, page, pages, tradeDate: pageInfo.tradeDate, chunk });
+  });
 
   const datePart = new Date().toISOString().slice(0, 10);
   doc.save(`RO_Transaction_Order_Forms_${datePart}.pdf`);
@@ -345,7 +375,7 @@ function drawPdfPage(doc, context) {
   doc.setTextColor(17, 24, 39);
   doc.text("Transaction Order Record", pageWidth / 2, 35, { align: "center" });
 
-  drawSignatureBlock(doc, margin, 78, fullWidth);
+  drawSignatureBlock(doc, margin, 78, fullWidth, context.tradeDate);
 
   const body = buildPdfRows(context.chunk);
   while (body.length < TRANSACTIONS_PER_PAGE) {
@@ -411,7 +441,7 @@ function drawPdfPage(doc, context) {
   doc.text("RO sign-off: I confirm that I have reviewed the above transaction order record and supporting details.", margin + 4, footerY + 8);
 }
 
-function drawSignatureBlock(doc, x, y, width) {
+function drawSignatureBlock(doc, x, y, width, tradeDate) {
   const leftWidth = width * 0.58;
   const notesWidth = width - leftWidth;
   const rowHeight = 38;
@@ -438,11 +468,12 @@ function drawSignatureBlock(doc, x, y, width) {
   doc.text("RO Review", x + 4, y + rowHeight + 23);
   doc.text("Notes", x + leftWidth + 4, y + 14);
 
+  const pageTradeDate = tradeDate === "No date" ? "" : tradeDate;
   doc.setFont("helvetica", "normal");
   doc.text(els.executedNameInput.value.trim(), x + labelWidth + 4, y + 23);
-  doc.text(els.executedDateInput.value, x + labelWidth + nameWidth + 4, y + 23);
+  doc.text(pageTradeDate, x + labelWidth + nameWidth + 4, y + 23);
   doc.text(els.roNameInput.value.trim(), x + labelWidth + 4, y + rowHeight + 23);
-  doc.text(els.roDateInput.value, x + labelWidth + nameWidth + 4, y + rowHeight + 23);
+  doc.text(pageTradeDate, x + labelWidth + nameWidth + 4, y + rowHeight + 23);
 
   addSignatureImage(doc, state.executedSignature, x + labelWidth + nameWidth - 78, y + 5, 70, 28);
   addSignatureImage(doc, state.roSignature, x + labelWidth + nameWidth - 78, y + rowHeight + 5, 70, 28);
