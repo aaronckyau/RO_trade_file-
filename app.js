@@ -335,7 +335,7 @@ function generatePdf() {
 
 function drawPdfPage(doc, context) {
   const pageWidth = doc.internal.pageSize.getWidth();
-  const margin = 22;
+  const margin = 14;
   const fullWidth = pageWidth - margin * 2;
 
   doc.setFillColor(229, 231, 235);
@@ -378,16 +378,16 @@ function drawPdfPage(doc, context) {
       0: { cellWidth: 24, halign: "center" },
       1: { cellWidth: 50 },
       2: { cellWidth: 50 },
-      3: { cellWidth: 58 },
+      3: { cellWidth: 56 },
       4: { cellWidth: 76 },
-      5: { cellWidth: 106 },
-      6: { cellWidth: 50, halign: "right" },
-      7: { cellWidth: 62, halign: "right" },
+      5: { cellWidth: 104 },
+      6: { cellWidth: 44, halign: "right" },
+      7: { cellWidth: 58, halign: "right" },
       8: { cellWidth: 28 },
-      9: { cellWidth: 70, halign: "right" },
-      10: { cellWidth: 46, halign: "right" },
-      11: { cellWidth: 60, halign: "right" },
-      12: { cellWidth: 85 },
+      9: { cellWidth: 66, halign: "right" },
+      10: { cellWidth: 42, halign: "right" },
+      11: { cellWidth: 56, halign: "right" },
+      12: { cellWidth: 82 },
       13: { cellWidth: 60, halign: "right" }
     },
     didParseCell(data) {
