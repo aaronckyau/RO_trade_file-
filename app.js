@@ -345,16 +345,6 @@ function drawPdfPage(doc, context) {
   doc.setTextColor(17, 24, 39);
   doc.text("Transaction Order Record", pageWidth / 2, 35, { align: "center" });
 
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  doc.setTextColor(55, 65, 81);
-  doc.text(
-    `${context.company} | Source: ${context.source} | Transactions ${context.start + 1}-${context.end} of ${state.transactions.length} | Page ${context.page} of ${context.pages}`,
-    pageWidth / 2,
-    57,
-    { align: "center" }
-  );
-
   drawSignatureBlock(doc, margin, 78, fullWidth);
 
   const body = buildPdfRows(context.chunk);
@@ -449,10 +439,10 @@ function drawSignatureBlock(doc, x, y, width) {
   doc.text("Notes", x + leftWidth + 4, y + 14);
 
   doc.setFont("helvetica", "normal");
-  doc.text(els.executedNameInput.value.trim() || "Name / Signature", x + labelWidth + 4, y + 23);
-  doc.text(els.executedDateInput.value || "Date", x + labelWidth + nameWidth + 4, y + 23);
-  doc.text(els.roNameInput.value.trim() || "Name / Signature", x + labelWidth + 4, y + rowHeight + 23);
-  doc.text(els.roDateInput.value || "Date", x + labelWidth + nameWidth + 4, y + rowHeight + 23);
+  doc.text(els.executedNameInput.value.trim(), x + labelWidth + 4, y + 23);
+  doc.text(els.executedDateInput.value, x + labelWidth + nameWidth + 4, y + 23);
+  doc.text(els.roNameInput.value.trim(), x + labelWidth + 4, y + rowHeight + 23);
+  doc.text(els.roDateInput.value, x + labelWidth + nameWidth + 4, y + rowHeight + 23);
 
   addSignatureImage(doc, state.executedSignature, x + labelWidth + nameWidth - 78, y + 5, 70, 28);
   addSignatureImage(doc, state.roSignature, x + labelWidth + nameWidth - 78, y + rowHeight + 5, 70, 28);
