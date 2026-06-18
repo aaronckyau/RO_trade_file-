@@ -208,7 +208,7 @@ Key areas:
 - `generatePdf()` creates one PDF per trade date and downloads a ZIP.
 - `drawPreTradeCompliancePage()` draws the first page of each PDF.
 - `drawPdfPage()` draws the transaction order record table pages.
-- `drawCjkCellText()` renders table cells containing Chinese as canvas images before inserting them into jsPDF. `reserveCjkCellHeight()` estimates the required wrapped height first, so Chinese descriptions are not truncated with ellipses.
+- `drawCjkCellText()` renders table cells containing Chinese as canvas images before inserting them into jsPDF. `reserveCjkCellHeight()` measures the required wrapped height with browser canvas first, so rows expand for multi-line Chinese descriptions instead of clipping or truncating.
 - `drawPostTradeCompliancePage()` draws the last page of each PDF.
 - `createZipBlob()` creates the ZIP in-browser without adding dependencies.
 - `buildPdfFilename()` creates the daily PDF filename.

@@ -23,6 +23,9 @@ const TYPE_SORT_ORDER = {
 };
 
 const CJK_PATTERN = /[\u3400-\u9fff\uf900-\ufaff]/;
+const PDF_CJK_FONT_SCALE = 1.35;
+const PDF_CJK_LINE_HEIGHT_SCALE = 1.2;
+const PDF_CJK_EXTRA_VERTICAL_PADDING = 4;
 const PDF_COLUMN_WIDTHS = {
   0: 50,
   1: 50,
@@ -1042,10 +1045,16 @@ function reserveCjkCellHeight(data) {
   const padding = getCellPadding(styles.cellPadding);
   const columnWidth = data.column.width || data.cell.width || PDF_COLUMN_WIDTHS[data.column.index] || 80;
   const usableWidth = Math.max(1, columnWidth - padding.left - padding.right);
-  const fontSize = Number(styles.fontSize || 7.3);
-  const lineHeight = fontSize * 1.52;
-  const lineCount = estimatePdfLineCount(String(data.cell.raw ?? ""), usableWidth, fontSize);
-  styles.minCellHeight = Math.max(Number(styles.minCellHeight || 0), lineCount * lineHeight + padding.top + padding.bottom);
+  const metrics = getCjkTextMetrics(styles);
+  const context = createCjkMeasureContext(metrics.font);
+  const lineCount = context
+    ? wrapCanvasText(context, String(data.cell.raw ?? ""), usableWidth).length
+    : estimatePdfLineCount(String(data.cell.raw ?? ""), usableWidth, metrics.fontSize);
+  styles.valign = "top";
+  styles.minCellHeight = Math.max(
+    Number(styles.minCellHeight || 0),
+    lineCount * metrics.lineHeight + padding.top + padding.bottom + PDF_CJK_EXTRA_VERTICAL_PADDING
+  );
 }
 
 function drawCjkCellText(doc, text, cell, styles) {
@@ -1059,13 +1068,11 @@ function drawCjkCellText(doc, text, cell, styles) {
   const context = canvas.getContext("2d");
   if (!context) return;
 
-  const fontSize = Number(styles.fontSize || 7.3);
-  const fontPx = fontSize * 1.35;
-  const lineHeight = fontPx * 1.12;
+  const metrics = getCjkTextMetrics(styles);
   context.scale(scale, scale);
   context.clearRect(0, 0, width, height);
   context.fillStyle = pdfColorToCss(styles.textColor, "#111827");
-  context.font = `${fontPx}px "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", Arial, sans-serif`;
+  context.font = metrics.font;
   context.textBaseline = "top";
 
   const lines = wrapCanvasText(context, text, width);
@@ -1076,10 +1083,30 @@ function drawCjkCellText(doc, text, cell, styles) {
     } else if (styles.halign === "center") {
       x = Math.max(0, (width - context.measureText(line).width) / 2);
     }
-    context.fillText(line, x, index * lineHeight);
+    context.fillText(line, x, index * metrics.lineHeight);
   });
 
   doc.addImage(canvas.toDataURL("image/png"), "PNG", cell.x + padding.left, cell.y + padding.top, width, height, undefined, "FAST");
+}
+
+function getCjkTextMetrics(styles) {
+  const fontSize = Number(styles.fontSize || 7.3);
+  const fontPx = fontSize * PDF_CJK_FONT_SCALE;
+  return {
+    fontSize,
+    fontPx,
+    lineHeight: fontPx * PDF_CJK_LINE_HEIGHT_SCALE,
+    font: `${fontPx}px "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", Arial, sans-serif`
+  };
+}
+
+function createCjkMeasureContext(font) {
+  if (typeof document === "undefined") return null;
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  context.font = font;
+  return context;
 }
 
 function estimatePdfLineCount(text, maxWidth, fontSize) {
