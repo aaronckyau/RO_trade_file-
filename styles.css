@@ -298,6 +298,29 @@ button:disabled {
   box-shadow: 0 8px 20px rgba(17, 24, 39, 0.04);
 }
 
+.main-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 0 0 12px;
+}
+
+.tab-button {
+  min-height: 34px;
+  background: #ffffff;
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.tab-button.is-active {
+  color: #ffffff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.tab-panel.hidden {
+  display: none;
+}
+
 .summary-value {
   display: block;
   font-size: 22px;
@@ -362,6 +385,21 @@ th {
   background: var(--header);
   color: #ffffff;
   text-align: left;
+}
+
+.sort-header {
+  min-height: auto;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  box-shadow: none;
+}
+
+.sort-header:hover {
+  text-decoration: underline;
 }
 
 td[contenteditable="true"] {

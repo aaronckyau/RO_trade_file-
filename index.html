@@ -51,21 +51,40 @@
           <button id="downloadPdfBtn" type="button" class="primary-btn" disabled>產生 ZIP</button>
         </section>
 
-        <section class="table-tools" aria-label="表格控制">
-          <div class="pager">
-            <button id="prevPageBtn" type="button" class="ghost-btn" disabled>上一頁</button>
-            <label for="pageSelect">預覽頁面</label>
-            <select id="pageSelect" disabled></select>
-            <button id="nextPageBtn" type="button" class="ghost-btn" disabled>下一頁</button>
-          </div>
-          <div id="statusText" class="status-text">請先上傳 Excel 檔案。</div>
+        <nav class="main-tabs" aria-label="工作分頁">
+          <button class="tab-button is-active" type="button" data-main-tab="transaction" aria-selected="true">Transaction</button>
+          <button class="tab-button" type="button" data-main-tab="strategy" aria-selected="false">Strategy Report</button>
+        </nav>
+
+        <section id="transactionPanel" class="tab-panel">
+          <section class="table-tools" aria-label="表格控制">
+            <div class="pager">
+              <button id="prevPageBtn" type="button" class="ghost-btn" disabled>上一頁</button>
+              <label for="pageSelect">預覽頁面</label>
+              <select id="pageSelect" disabled></select>
+              <button id="nextPageBtn" type="button" class="ghost-btn" disabled>下一頁</button>
+            </div>
+            <div id="statusText" class="status-text">請先上傳 Excel 檔案。</div>
+          </section>
+
+          <section class="table-zone" aria-label="可編輯交易表">
+            <table id="transactionTable">
+              <thead></thead>
+              <tbody></tbody>
+            </table>
+          </section>
         </section>
 
-        <section class="table-zone" aria-label="可編輯交易表">
-          <table id="transactionTable">
-            <thead></thead>
-            <tbody></tbody>
-          </table>
+        <section id="strategyPanel" class="tab-panel hidden">
+          <section class="table-tools" aria-label="strategy report 表格控制">
+            <div class="status-text">Strategy report 清單。點擊「類型」可排序。</div>
+          </section>
+          <section class="table-zone" aria-label="strategy report 表">
+            <table id="strategyTable">
+              <thead></thead>
+              <tbody></tbody>
+            </table>
+          </section>
         </section>
       </section>
 
@@ -124,6 +143,6 @@
     <script src="vendor/xlsx.full.min.js"></script>
     <script src="vendor/jspdf.umd.min.js"></script>
     <script src="vendor/jspdf.plugin.autotable.min.js"></script>
-    <script src="app.js?v=20260618decision-post-checks"></script>
+    <script src="app.js?v=20260618strategy-tabs"></script>
   </body>
 </html>

@@ -1,5 +1,27 @@
 const TRANSACTIONS_PER_PAGE = 20;
 
+const TYPE_LABELS = {
+  BO: "Buy to Open",
+  SS: "Sell to Open",
+  SH: "Sell to Close",
+  BC: "Buy to Close"
+};
+
+const TYPE_SORT_ORDER = {
+  "Buy to Open": 1,
+  "Sell to Open": 2,
+  "Sell to Close": 3,
+  "Buy to Close": 4,
+  "BUY TO OPEN": 1,
+  "SELL TO OPEN": 2,
+  "SELL TO CLOSE": 3,
+  "BUY TO CLOSE": 4,
+  "BUY OPEN": 1,
+  "SHORT SELL": 2,
+  SELL: 3,
+  "BUY CLOSE": 4
+};
+
 const FIELDS = [
   { key: "tradeDate", label: "交易日期", pdf: "Trade Date" },
   { key: "settleDate", label: "交收日期", pdf: "Settle Date" },
@@ -22,7 +44,10 @@ const state = {
   page: 1,
   executedSignature: "",
   roSignature: "",
-  defaultChecklistChecked: true
+  defaultChecklistChecked: true,
+  activeMainTab: "transaction",
+  transactionTypeSort: "none",
+  strategyTypeSort: "none"
 };
 
 const els = {
@@ -33,6 +58,9 @@ const els = {
   saveSettingsBtn: document.getElementById("saveSettingsBtn"),
   excelInput: document.getElementById("excelInput"),
   fileMeta: document.getElementById("fileMeta"),
+  mainTabButtons: document.querySelectorAll("[data-main-tab]"),
+  transactionPanel: document.getElementById("transactionPanel"),
+  strategyPanel: document.getElementById("strategyPanel"),
   companyInput: document.getElementById("companyInput"),
   executedNameInput: document.getElementById("executedNameInput"),
   executedDateInput: document.getElementById("executedDateInput"),
@@ -54,7 +82,9 @@ const els = {
   settingsStatus: document.getElementById("settingsStatus"),
   table: document.getElementById("transactionTable"),
   thead: document.querySelector("#transactionTable thead"),
-  tbody: document.querySelector("#transactionTable tbody")
+  tbody: document.querySelector("#transactionTable tbody"),
+  strategyThead: document.querySelector("#strategyTable thead"),
+  strategyTbody: document.querySelector("#strategyTable tbody")
 };
 
 function init() {
@@ -66,6 +96,9 @@ function init() {
   });
   els.excelInput.addEventListener("change", onExcelUpload);
   els.downloadPdfBtn.addEventListener("click", generatePdf);
+  els.mainTabButtons.forEach((button) => {
+    button.addEventListener("click", () => setMainTab(button.dataset.mainTab));
+  });
   els.defaultChecklistCheckedInput.addEventListener("change", () => {
     state.defaultChecklistChecked = els.defaultChecklistCheckedInput.checked;
   });
@@ -76,12 +109,28 @@ function init() {
   els.roSigInput.addEventListener("change", (event) => loadSignature(event, "roSignature", els.roSigPreview));
 
   renderBlankState();
+  renderMainTabs();
 }
 
 function showPage(page) {
   const isSettings = page === "settings";
   els.mainPage.classList.toggle("hidden", isSettings);
   els.settingsPage.classList.toggle("hidden", !isSettings);
+}
+
+function setMainTab(tab) {
+  state.activeMainTab = tab === "strategy" ? "strategy" : "transaction";
+  renderMainTabs();
+}
+
+function renderMainTabs() {
+  els.mainTabButtons.forEach((button) => {
+    const selected = button.dataset.mainTab === state.activeMainTab;
+    button.classList.toggle("is-active", selected);
+    button.setAttribute("aria-selected", String(selected));
+  });
+  els.transactionPanel.classList.toggle("hidden", state.activeMainTab !== "transaction");
+  els.strategyPanel.classList.toggle("hidden", state.activeMainTab !== "strategy");
 }
 
 async function onExcelUpload(event) {
@@ -113,6 +162,7 @@ function parseWorkbook(buffer, filename) {
     updateSummary();
     renderPager();
     renderTable();
+    renderStrategyTable();
     els.downloadPdfBtn.disabled = !transactions.length;
     setStatus(`已從 ${filename} 載入 ${transactions.length} 筆交易。產生 PDF 前可以直接修改表格內容。`);
   } catch (error) {
@@ -120,6 +170,7 @@ function parseWorkbook(buffer, filename) {
     state.sourceFile = "";
     updateSummary();
     renderBlankState();
+    renderStrategyBlankState();
     els.downloadPdfBtn.disabled = true;
     setStatus(error.message, true);
   }
@@ -168,13 +219,7 @@ function cleanText(value) {
 
 function mapTradeType(value) {
   const code = cleanText(value).toUpperCase();
-  const map = {
-    BO: "BUY OPEN",
-    BC: "BUY CLOSE",
-    SH: "SELL",
-    SS: "SHORT SELL"
-  };
-  return map[code] || cleanText(value);
+  return TYPE_LABELS[code] || cleanText(value);
 }
 
 function formatExcelDate(value) {
@@ -283,6 +328,7 @@ function renderBlankState() {
   els.thead.innerHTML = "";
   els.tbody.innerHTML = `<tr><td class="blank-state" colspan="${FIELDS.length}">請上傳 Excel，或載入範例 Excel，以預覽交易指令表。</td></tr>`;
   renderPager();
+  renderStrategyBlankState();
 }
 
 function renderTable() {
@@ -292,12 +338,13 @@ function renderTable() {
   }
 
   const pageInfo = getTransactionPages()[state.page - 1];
-  const rows = pageInfo ? pageInfo.rows : [];
+  const rows = pageInfo ? sortRowsByType(pageInfo.rows, state.transactionTypeSort) : [];
 
-  els.thead.innerHTML = `<tr>${FIELDS.map((field) => `<th>${field.label}</th>`).join("")}</tr>`;
+  els.thead.innerHTML = `<tr>${FIELDS.map((field) => renderHeaderCell(field, "transaction")).join("")}</tr>`;
   els.tbody.innerHTML = rows.map(({ transaction, index }) => {
     return `<tr>${FIELDS.map((field) => renderCell(transaction, field, index)).join("")}</tr>`;
   }).join("");
+  bindSortButtons(els.thead);
 
   els.tbody.querySelectorAll("td[contenteditable='true']").forEach((cell) => {
     cell.addEventListener("blur", onCellEdit);
@@ -310,11 +357,75 @@ function renderTable() {
   });
 }
 
+function renderStrategyBlankState() {
+  els.strategyThead.innerHTML = "";
+  els.strategyTbody.innerHTML = `<tr><td class="blank-state" colspan="${FIELDS.length}">請先上傳 Excel 檔案，以建立 strategy report 清單。</td></tr>`;
+}
+
+function renderStrategyTable() {
+  if (!state.transactions.length) {
+    renderStrategyBlankState();
+    return;
+  }
+
+  const rows = sortRowsByType(
+    state.transactions.map((transaction, index) => ({ transaction, index })),
+    state.strategyTypeSort
+  );
+
+  els.strategyThead.innerHTML = `<tr>${FIELDS.map((field) => renderHeaderCell(field, "strategy")).join("")}</tr>`;
+  els.strategyTbody.innerHTML = rows.map(({ transaction }) => {
+    return `<tr>${FIELDS.map((field) => renderReadOnlyCell(transaction, field)).join("")}</tr>`;
+  }).join("");
+  bindSortButtons(els.strategyThead);
+}
+
+function renderHeaderCell(field, tableName) {
+  if (field.key !== "type") return `<th>${field.label}</th>`;
+  const direction = tableName === "strategy" ? state.strategyTypeSort : state.transactionTypeSort;
+  const suffix = direction === "asc" ? " ▲" : direction === "desc" ? " ▼" : "";
+  return `<th><button class="sort-header" type="button" data-sort-table="${tableName}" data-sort-key="type">${field.label}${suffix}</button></th>`;
+}
+
+function bindSortButtons(container) {
+  container.querySelectorAll("[data-sort-key='type']").forEach((button) => {
+    button.addEventListener("click", () => cycleTypeSort(button.dataset.sortTable));
+  });
+}
+
+function cycleTypeSort(tableName) {
+  const key = tableName === "strategy" ? "strategyTypeSort" : "transactionTypeSort";
+  state[key] = state[key] === "none" ? "asc" : state[key] === "asc" ? "desc" : "none";
+  renderTable();
+  renderStrategyTable();
+}
+
+function sortRowsByType(rows, direction) {
+  if (direction === "none") return rows;
+  const multiplier = direction === "asc" ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const typeDiff = (getTypeRank(a.transaction.type) - getTypeRank(b.transaction.type)) * multiplier;
+    if (typeDiff !== 0) return typeDiff;
+    return String(a.transaction.security || "").localeCompare(String(b.transaction.security || ""));
+  });
+}
+
+function getTypeRank(value) {
+  return TYPE_SORT_ORDER[cleanText(value).toUpperCase()] || TYPE_SORT_ORDER[cleanText(value)] || 99;
+}
+
 function renderCell(transaction, field, sourceIndex) {
   const value = transaction[field.key] ?? "";
   const negative = isNegative(value) ? " negative" : "";
   const numeric = field.numeric ? " numeric" : "";
   return `<td class="${numeric}${negative}" contenteditable="true" data-index="${sourceIndex}" data-key="${field.key}">${escapeHtml(value)}</td>`;
+}
+
+function renderReadOnlyCell(transaction, field) {
+  const value = transaction[field.key] ?? "";
+  const negative = isNegative(value) ? " negative" : "";
+  const numeric = field.numeric ? " numeric" : "";
+  return `<td class="${numeric}${negative}">${escapeHtml(value)}</td>`;
 }
 
 function onCellEdit(event) {
@@ -324,6 +435,7 @@ function onCellEdit(event) {
   state.transactions[index][key] = cell.textContent.trim();
   renderPager();
   renderTable();
+  renderStrategyTable();
   setStatus("表格已更新。PDF 會使用修改後的數值。");
 }
 
