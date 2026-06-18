@@ -208,6 +208,7 @@ Key areas:
 - `generatePdf()` creates one PDF per trade date and downloads a ZIP.
 - `drawPreTradeCompliancePage()` draws the first page of each PDF.
 - `drawPdfPage()` draws the transaction order record table pages.
+- `drawCjkCellText()` renders table cells containing Chinese as canvas images before inserting them into jsPDF. This avoids jsPDF's built-in font encoding issue with CJK text in the transaction table.
 - `drawPostTradeCompliancePage()` draws the last page of each PDF.
 - `createZipBlob()` creates the ZIP in-browser without adding dependencies.
 - `buildPdfFilename()` creates the daily PDF filename.

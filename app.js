@@ -22,6 +22,8 @@ const TYPE_SORT_ORDER = {
   "BUY CLOSE": 4
 };
 
+const CJK_PATTERN = /[\u3400-\u9fff\uf900-\ufaff]/;
+
 const FIELDS = [
   { key: "tradeDate", label: "交易日期", pdf: "Trade Date" },
   { key: "settleDate", label: "交收日期", pdf: "Settle Date" },
@@ -987,11 +989,19 @@ function drawPdfPage(doc, context) {
       12: { cellWidth: 60, halign: "right" }
     },
     didParseCell(data) {
+      if (data.section === "body" && containsCjk(data.cell.raw)) {
+        data.cell.text = [""];
+      }
       if (data.section === "body" && [8, 10].includes(data.column.index)) {
         const text = Array.isArray(data.cell.text) ? data.cell.text.join("") : String(data.cell.text || "");
         if (text.includes("(") || text.trim().startsWith("-")) {
           data.cell.styles.textColor = [220, 38, 38];
         }
+      }
+    },
+    didDrawCell(data) {
+      if (data.section === "body" && containsCjk(data.cell.raw)) {
+        drawCjkCellText(doc, String(data.cell.raw ?? ""), data.cell, data.cell.styles);
       }
     }
   });
@@ -1005,6 +1015,109 @@ function drawPdfPage(doc, context) {
   doc.setFontSize(9);
   doc.setTextColor(17, 24, 39);
   doc.text("RO sign-off: I confirm that I have reviewed the above transaction order record and supporting details.", margin + 4, footerY + 8);
+}
+
+function containsCjk(value) {
+  return CJK_PATTERN.test(String(value ?? ""));
+}
+
+function drawCjkCellText(doc, text, cell, styles) {
+  const canvas = document.createElement("canvas");
+  const padding = getCellPadding(styles.cellPadding);
+  const width = Math.max(1, cell.width - padding.left - padding.right);
+  const height = Math.max(1, cell.height - padding.top - padding.bottom);
+  const scale = 3;
+  canvas.width = Math.ceil(width * scale);
+  canvas.height = Math.ceil(height * scale);
+  const context = canvas.getContext("2d");
+  if (!context) return;
+
+  const fontSize = Number(styles.fontSize || 7.3);
+  const fontPx = fontSize * 1.35;
+  const lineHeight = fontPx * 1.12;
+  context.scale(scale, scale);
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = pdfColorToCss(styles.textColor, "#111827");
+  context.font = `${fontPx}px "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", Arial, sans-serif`;
+  context.textBaseline = "top";
+
+  const lines = wrapCanvasText(context, text, width, Math.max(1, Math.floor(height / lineHeight)));
+  lines.forEach((line, index) => {
+    let x = 0;
+    if (styles.halign === "right") {
+      x = Math.max(0, width - context.measureText(line).width);
+    } else if (styles.halign === "center") {
+      x = Math.max(0, (width - context.measureText(line).width) / 2);
+    }
+    context.fillText(line, x, index * lineHeight);
+  });
+
+  doc.addImage(canvas.toDataURL("image/png"), "PNG", cell.x + padding.left, cell.y + padding.top, width, height, undefined, "FAST");
+}
+
+function getCellPadding(value) {
+  if (typeof value === "number") {
+    return { top: value, right: value, bottom: value, left: value };
+  }
+  if (value && typeof value === "object") {
+    const vertical = Number(value.vertical ?? value.top ?? 0);
+    const horizontal = Number(value.horizontal ?? value.right ?? 0);
+    return {
+      top: Number(value.top ?? vertical),
+      right: Number(value.right ?? horizontal),
+      bottom: Number(value.bottom ?? vertical),
+      left: Number(value.left ?? horizontal)
+    };
+  }
+  return { top: 0, right: 0, bottom: 0, left: 0 };
+}
+
+function pdfColorToCss(value, fallback) {
+  if (Array.isArray(value) && value.length >= 3) {
+    return `rgb(${value[0]}, ${value[1]}, ${value[2]})`;
+  }
+  if (typeof value === "number") {
+    return `rgb(${value}, ${value}, ${value})`;
+  }
+  return fallback;
+}
+
+function wrapCanvasText(context, text, maxWidth, maxLines) {
+  const chars = Array.from(String(text || ""));
+  const lines = [];
+  let current = "";
+
+  for (const char of chars) {
+    const candidate = current + char;
+    if (context.measureText(candidate).width <= maxWidth || !current) {
+      current = candidate;
+      continue;
+    }
+    lines.push(current);
+    current = char;
+    if (lines.length === maxLines) break;
+  }
+  if (lines.length < maxLines && current) {
+    lines.push(current);
+  }
+  if (lines.length > maxLines) {
+    lines.length = maxLines;
+  }
+  if (chars.length && lines.length === maxLines) {
+    const used = lines.join("").length;
+    if (used < chars.length) {
+      lines[maxLines - 1] = ellipsizeCanvasText(context, lines[maxLines - 1], maxWidth);
+    }
+  }
+  return lines;
+}
+
+function ellipsizeCanvasText(context, text, maxWidth) {
+  let fitted = String(text || "");
+  while (fitted && context.measureText(`${fitted}...`).width > maxWidth) {
+    fitted = fitted.slice(0, -1);
+  }
+  return `${fitted}...`;
 }
 
 function fitPdfText(doc, text, maxWidth) {
