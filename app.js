@@ -359,12 +359,17 @@ function generatePdf() {
     const dayPages = getPagesForTransactionGroup(group);
     const pages = dayPages.length;
 
+    drawPreTradeCompliancePage(doc, { company, tradeDate: group.tradeDate });
+
     dayPages.forEach((pageInfo, index) => {
       const page = index + 1;
-      if (page > 1) doc.addPage("a4", "landscape");
+      doc.addPage("a4", "landscape");
       const chunk = pageInfo.rows.map(({ transaction }) => transaction);
       drawPdfPage(doc, { company, source, page, pages, tradeDate: pageInfo.tradeDate, chunk });
     });
+
+    doc.addPage("a4", "landscape");
+    drawPostTradeCompliancePage(doc, { company, tradeDate: group.tradeDate });
 
     return {
       name: buildPdfFilename(company, group.tradeDate),
@@ -512,6 +517,154 @@ const CRC32_TABLE = Array.from({ length: 256 }, (_, index) => {
   return value >>> 0;
 });
 
+function drawPreTradeCompliancePage(doc, context) {
+  const margin = 48;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const contentWidth = pageWidth - margin * 2;
+  let y = drawComplianceHeader(doc, context, "Fund Transaction Compliance Report");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.setTextColor(17, 24, 39);
+  doc.text("Part I: Pre-Trade Compliance Check", margin, y);
+  y += 20;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  y = drawWrappedText(
+    doc,
+    "In accordance with the Code of Conduct for Persons Licensed by or Registered with the Securities and Futures Commission, all trade orders must pass the following compliance checklist before execution. The Responsible Officer (RO) must independently review each transaction.",
+    margin,
+    y,
+    contentWidth,
+    13
+  ) + 16;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10.5);
+  doc.text("1. Authorization and Investment Restriction Check", margin, y);
+  y += 18;
+
+  [
+    "Whether the trade is consistent with the investment objectives of the account / fund.",
+    "Whether the trade breaches any prohibition or restriction in the fund offering documents for specific industries, such as gambling or tobacco, or regions, such as emerging markets.",
+    "Whether the counterparty or issuer is a connected party of the company, and whether all required approvals have been obtained.",
+    "Whether the trader considered price, cost, speed, and the quality of the execution venue.",
+    "Whether the trade is on a restricted list or watch list."
+  ].forEach((item) => {
+    y = drawCheckItem(doc, item, margin, y, contentWidth);
+  });
+
+  y += 8;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10.5);
+  doc.text("2. Pre-Trade Check Decision", margin, y);
+  y += 18;
+
+  [
+    "Approved for execution: all checklist items have passed.",
+    "Conditional approval / exception execution: a minor breach exists. Complete the Exception Explanation below and obtain approval from the Responsible Officer (RO) and Chief Compliance Officer.",
+    "Rejected for execution: a material breach of investment restrictions exists and the instruction has been cancelled."
+  ].forEach((item) => {
+    y = drawCheckItem(doc, item, margin, y, contentWidth);
+  });
+
+  y += 10;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9.5);
+  doc.text("Exception Explanation:", margin, y);
+  y += 8;
+  doc.setDrawColor(207, 213, 221);
+  doc.rect(margin, y, contentWidth, 48);
+}
+
+function drawPostTradeCompliancePage(doc, context) {
+  const margin = 48;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const contentWidth = pageWidth - margin * 2;
+  let y = drawComplianceHeader(doc, context, "Fund Transaction Compliance Report");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.setTextColor(17, 24, 39);
+  doc.text("Part III: Post-Trade Compliance Check", margin, y);
+  y += 22;
+
+  [
+    "Whether the executed trade quantity, price, and limit price are consistent with the pre-trade instruction, or are within a reasonable slippage range.",
+    "Where the same trade order was executed across multiple accounts as a block trade, whether the allocation was fair, such as by holding proportion or agreed method, and fully recorded.",
+    "Whether any erroneous trade occurred. If yes, whether it has been recorded and handled in accordance with internal procedures."
+  ].forEach((item) => {
+    y = drawCheckItem(doc, item, margin, y, contentWidth);
+  });
+
+  y += 24;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.text("Signature Confirmation", margin, y);
+  y += 22;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  y = drawWrappedText(
+    doc,
+    "I confirm that I have performed the pre-trade and post-trade checks for the above account / fund transactions on the above date in accordance with the relevant SFC guidelines and the company's internal control procedures, and that the relevant records have been retained for regulatory inspection.",
+    margin,
+    y,
+    contentWidth,
+    14
+  ) + 44;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(11);
+  doc.text("Responsible Officer (RO) Signature: ____________________", margin, y);
+}
+
+function drawComplianceHeader(doc, context, title) {
+  const margin = 48;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const contentWidth = pageWidth - margin * 2;
+
+  doc.setFillColor(229, 231, 235);
+  doc.rect(margin, 28, contentWidth, 34, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(17);
+  doc.setTextColor(17, 24, 39);
+  doc.text(title, pageWidth / 2, 50, { align: "center" });
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.text(`Trade Date: ${formatDisplayTradeDate(context.tradeDate)}`, margin, 88);
+  doc.text(`Fund Name: ${context.company}`, margin, 106);
+
+  doc.setDrawColor(207, 213, 221);
+  doc.line(margin, 120, margin + contentWidth, 120);
+  return 146;
+}
+
+function drawWrappedText(doc, text, x, y, maxWidth, lineHeight) {
+  const lines = doc.splitTextToSize(text, maxWidth);
+  doc.text(lines, x, y);
+  return y + lines.length * lineHeight;
+}
+
+function drawCheckItem(doc, text, x, y, maxWidth) {
+  const boxSize = 8;
+  doc.setDrawColor(75, 85, 99);
+  doc.rect(x, y - 7, boxSize, boxSize);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  doc.setTextColor(17, 24, 39);
+  const lines = doc.splitTextToSize(text, maxWidth - 20);
+  doc.text(lines, x + 16, y);
+  return y + Math.max(16, lines.length * 13);
+}
+
+function formatDisplayTradeDate(tradeDate) {
+  const value = String(tradeDate || "").trim();
+  return value === "No date" ? "" : value;
+}
+
 function drawPdfPage(doc, context) {
   const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 14;
@@ -526,7 +679,7 @@ function drawPdfPage(doc, context) {
   doc.setFontSize(15);
   doc.text("Transaction Order Record", pageWidth / 2, 45, { align: "center" });
 
-  drawSignatureBlock(doc, margin, 78, fullWidth, context.tradeDate);
+  drawSignatureBlock(doc, margin, 78, fullWidth);
 
   const body = buildPdfRows(context.chunk);
   while (body.length < TRANSACTIONS_PER_PAGE) {
@@ -603,13 +756,12 @@ function fitPdfText(doc, text, maxWidth) {
   return `${fitted}...`;
 }
 
-function drawSignatureBlock(doc, x, y, width, tradeDate) {
+function drawSignatureBlock(doc, x, y, width) {
   const leftWidth = width * 0.58;
   const notesWidth = width - leftWidth;
   const rowHeight = 38;
   const labelWidth = 76;
   const nameWidth = 190;
-  const dateWidth = leftWidth - labelWidth - nameWidth;
 
   doc.setDrawColor(154, 164, 178);
   doc.setLineWidth(0.7);
@@ -630,12 +782,9 @@ function drawSignatureBlock(doc, x, y, width, tradeDate) {
   doc.text("RO Review", x + 4, y + rowHeight + 23);
   doc.text("Notes", x + leftWidth + 4, y + 14);
 
-  const pageTradeDate = tradeDate === "No date" ? "" : tradeDate;
   doc.setFont("helvetica", "normal");
   doc.text(els.executedNameInput.value.trim(), x + labelWidth + 4, y + 23);
-  doc.text(pageTradeDate, x + labelWidth + nameWidth + 4, y + 23);
   doc.text(els.roNameInput.value.trim(), x + labelWidth + 4, y + rowHeight + 23);
-  doc.text(pageTradeDate, x + labelWidth + nameWidth + 4, y + rowHeight + 23);
 
   addSignatureImage(doc, state.executedSignature, x + labelWidth + nameWidth - 78, y + 5, 70, 28);
   addSignatureImage(doc, state.roSignature, x + labelWidth + nameWidth - 78, y + rowHeight + 5, 70, 28);
