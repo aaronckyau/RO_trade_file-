@@ -23,6 +23,21 @@ const TYPE_SORT_ORDER = {
 };
 
 const CJK_PATTERN = /[\u3400-\u9fff\uf900-\ufaff]/;
+const PDF_COLUMN_WIDTHS = {
+  0: 50,
+  1: 50,
+  2: 56,
+  3: 82,
+  4: 116,
+  5: 44,
+  6: 58,
+  7: 28,
+  8: 66,
+  9: 42,
+  10: 56,
+  11: 88,
+  12: 60
+};
 
 const FIELDS = [
   { key: "tradeDate", label: "交易日期", pdf: "Trade Date" },
@@ -990,6 +1005,7 @@ function drawPdfPage(doc, context) {
     },
     didParseCell(data) {
       if (data.section === "body" && containsCjk(data.cell.raw)) {
+        reserveCjkCellHeight(data);
         data.cell.text = [""];
       }
       if (data.section === "body" && [8, 10].includes(data.column.index)) {
@@ -1021,6 +1037,17 @@ function containsCjk(value) {
   return CJK_PATTERN.test(String(value ?? ""));
 }
 
+function reserveCjkCellHeight(data) {
+  const styles = data.cell.styles;
+  const padding = getCellPadding(styles.cellPadding);
+  const columnWidth = data.column.width || data.cell.width || PDF_COLUMN_WIDTHS[data.column.index] || 80;
+  const usableWidth = Math.max(1, columnWidth - padding.left - padding.right);
+  const fontSize = Number(styles.fontSize || 7.3);
+  const lineHeight = fontSize * 1.52;
+  const lineCount = estimatePdfLineCount(String(data.cell.raw ?? ""), usableWidth, fontSize);
+  styles.minCellHeight = Math.max(Number(styles.minCellHeight || 0), lineCount * lineHeight + padding.top + padding.bottom);
+}
+
 function drawCjkCellText(doc, text, cell, styles) {
   const canvas = document.createElement("canvas");
   const padding = getCellPadding(styles.cellPadding);
@@ -1041,7 +1068,7 @@ function drawCjkCellText(doc, text, cell, styles) {
   context.font = `${fontPx}px "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", Arial, sans-serif`;
   context.textBaseline = "top";
 
-  const lines = wrapCanvasText(context, text, width, Math.max(1, Math.floor(height / lineHeight)));
+  const lines = wrapCanvasText(context, text, width);
   lines.forEach((line, index) => {
     let x = 0;
     if (styles.halign === "right") {
@@ -1053,6 +1080,31 @@ function drawCjkCellText(doc, text, cell, styles) {
   });
 
   doc.addImage(canvas.toDataURL("image/png"), "PNG", cell.x + padding.left, cell.y + padding.top, width, height, undefined, "FAST");
+}
+
+function estimatePdfLineCount(text, maxWidth, fontSize) {
+  const approxCjkWidth = fontSize * 0.72;
+  const maxUnits = Math.max(1, maxWidth / approxCjkWidth);
+  let lines = 1;
+  let currentUnits = 0;
+
+  for (const char of Array.from(String(text || ""))) {
+    const units = getTextUnitWidth(char);
+    if (currentUnits > 0 && currentUnits + units > maxUnits) {
+      lines += 1;
+      currentUnits = units;
+    } else {
+      currentUnits += units;
+    }
+  }
+  return lines;
+}
+
+function getTextUnitWidth(char) {
+  if (CJK_PATTERN.test(char)) return 1;
+  if (/\s/.test(char)) return 0.35;
+  if (/[.,:;|/\\()[\]{}+\-]/.test(char)) return 0.45;
+  return 0.58;
 }
 
 function getCellPadding(value) {
@@ -1082,7 +1134,7 @@ function pdfColorToCss(value, fallback) {
   return fallback;
 }
 
-function wrapCanvasText(context, text, maxWidth, maxLines) {
+function wrapCanvasText(context, text, maxWidth) {
   const chars = Array.from(String(text || ""));
   const lines = [];
   let current = "";
@@ -1095,29 +1147,11 @@ function wrapCanvasText(context, text, maxWidth, maxLines) {
     }
     lines.push(current);
     current = char;
-    if (lines.length === maxLines) break;
   }
-  if (lines.length < maxLines && current) {
+  if (current) {
     lines.push(current);
   }
-  if (lines.length > maxLines) {
-    lines.length = maxLines;
-  }
-  if (chars.length && lines.length === maxLines) {
-    const used = lines.join("").length;
-    if (used < chars.length) {
-      lines[maxLines - 1] = ellipsizeCanvasText(context, lines[maxLines - 1], maxWidth);
-    }
-  }
   return lines;
-}
-
-function ellipsizeCanvasText(context, text, maxWidth) {
-  let fitted = String(text || "");
-  while (fitted && context.measureText(`${fitted}...`).width > maxWidth) {
-    fitted = fitted.slice(0, -1);
-  }
-  return `${fitted}...`;
 }
 
 function fitPdfText(doc, text, maxWidth) {
