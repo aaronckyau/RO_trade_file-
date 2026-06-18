@@ -210,7 +210,10 @@ Key areas:
 - `drawPostTradeCompliancePage()` draws the last page of each PDF.
 - `createZipBlob()` creates the ZIP in-browser without adding dependencies.
 - `buildPdfFilename()` creates the daily PDF filename.
-- Strategy Report tab calls `/RO_transaction/api/strategy-report` for open positions and downloads the returned PDF.
+- Strategy Report tab calls `/RO_transaction/api/strategy-report` for open stock / equity positions and downloads the returned PDF.
+- The stock strategy report template is not used for futures or options. Those rows should show `N/A` until a separate template is added.
+- Strategy report market and company data must be available before the trade date. The API uses a cutoff of one calendar day before the trade date, then falls back to the latest available trading day before the trade date if needed.
+- Strategy report Details of Proposal excludes Deal No. and displays transaction type as `BUY` or `SELL` only.
 
 ## Current PDF Structure
 

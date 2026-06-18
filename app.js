@@ -431,7 +431,7 @@ function renderReadOnlyCell(transaction, field) {
 }
 
 function renderStrategyActionCell(transaction, sourceIndex) {
-  if (!isOpenPosition(transaction)) {
+  if (!canGenerateStrategyReport(transaction)) {
     return `<td><span class="muted-label">N/A</span></td>`;
   }
   return `<td><button class="small-action-btn" type="button" data-report-index="${sourceIndex}">生成 PDF</button></td>`;
@@ -445,12 +445,25 @@ function bindStrategyReportButtons() {
 
 function isOpenPosition(transaction) {
   const type = cleanText(transaction.type).toLowerCase();
-  return type.includes("open");
+  return ["bo", "buy open", "buy to open", "ss", "short sell", "sell open", "sell to open"].includes(type);
+}
+
+function isStockTrade(transaction) {
+  const security = ` ${cleanText(transaction.security).toLowerCase()} `;
+  const nonStockMarkers = [" future", " futures", " option", " call ", " put ", " curncy", " index", " cmdty"];
+  if (nonStockMarkers.some((marker) => security.includes(marker))) {
+    return false;
+  }
+  return security.includes(" equity");
+}
+
+function canGenerateStrategyReport(transaction) {
+  return isOpenPosition(transaction) && isStockTrade(transaction);
 }
 
 async function generateStrategyReport(index, button) {
   const transaction = state.transactions[index];
-  if (!transaction || !isOpenPosition(transaction)) return;
+  if (!transaction || !canGenerateStrategyReport(transaction)) return;
 
   const originalText = button.textContent;
   button.disabled = true;

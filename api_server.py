@@ -74,6 +74,19 @@ def parse_symbol(security: str) -> str:
     return re.sub(r"[^A-Za-z0-9.\-]", "", token[0]).upper()
 
 
+def is_stock_security(security: str) -> bool:
+    text = f" {str(security or '').strip().lower()} "
+    non_stock_markers = (" future", " futures", " option", " call ", " put ", " curncy", " index", " cmdty")
+    if any(marker in text for marker in non_stock_markers):
+        return False
+    return " equity" in text
+
+
+def is_open_position_type(value: str) -> bool:
+    normalized = re.sub(r"\s+", " ", str(value or "").strip().lower())
+    return normalized in {"bo", "buy open", "buy to open", "ss", "short sell", "sell open", "sell to open"}
+
+
 def parse_trade_date(value: str) -> datetime:
     text = str(value or "").strip()
     for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%d-%m-%Y"):
@@ -103,13 +116,14 @@ def round2(value: float | None) -> float | None:
     return round(value, 2)
 
 
-def latest_before(rows: list[dict], trade_date: str) -> dict | None:
+def latest_before(rows: list[dict], cutoff_date: str) -> dict | None:
     filtered = []
     for row in rows:
         marker = str(row.get("filingDate") or row.get("date") or "")
-        if marker and marker <= trade_date:
-            filtered.append(row)
-    return filtered[0] if filtered else None
+        if marker and marker <= cutoff_date:
+            filtered.append((marker, row))
+    filtered.sort(key=lambda item: item[0], reverse=True)
+    return filtered[0][1] if filtered else None
 
 
 def same_quarter_prior_year(rows: list[dict], latest: dict) -> dict | None:
@@ -130,11 +144,14 @@ def avg(rows: list[dict], field: str) -> float | None:
     return mean(values) if values else None
 
 
-def compute_technicals(history: list[dict], trade_date: str, trade_price: float) -> dict:
+def compute_technicals(history: list[dict], cutoff_date: str, trade_price: float) -> dict:
     rows = sorted(history, key=lambda item: item.get("date", ""))
-    idx = next((index for index, row in enumerate(rows) if row.get("date") == trade_date), -1)
+    idx = -1
+    for index, row in enumerate(rows):
+        if str(row.get("date", "")) <= cutoff_date:
+            idx = index
     if idx < 0:
-        raise ValueError("No historical price data found for trade date.")
+        raise ValueError("No historical price data found before trade date.")
     up_to = rows[: idx + 1]
     as_of = rows[idx]
 
@@ -204,9 +221,9 @@ def compute_technicals(history: list[dict], trade_date: str, trade_price: float)
         "week52Low": round2(week52_low),
         "closeVs52WeekHighPct": round2((close / week52_high - 1) * 100) if week52_high else None,
         "closeVs52WeekLowPct": round2((close / week52_low - 1) * 100) if week52_low else None,
-        "tradePriceVsClosePct": round2((trade_price / close - 1) * 100) if close else None,
-        "tradePriceVsVwapPct": round2((trade_price / vwap - 1) * 100) if vwap else None,
-        "tradePriceWithinDayRange": as_float(as_of.get("low")) <= trade_price <= as_float(as_of.get("high")),
+        "expectedPriceVsClosePct": round2((trade_price / close - 1) * 100) if close else None,
+        "expectedPriceVsVwapPct": round2((trade_price / vwap - 1) * 100) if vwap else None,
+        "expectedPriceWithinReferenceDayRange": as_float(as_of.get("low")) <= trade_price <= as_float(as_of.get("high")),
     }
 
 
@@ -216,15 +233,16 @@ def build_facts(transaction: dict, fmp_api_key: str) -> dict:
         raise ValueError("Missing stock symbol.")
     trade_dt = parse_trade_date(transaction.get("tradeDate", ""))
     trade_date = trade_dt.strftime("%Y-%m-%d")
+    data_cutoff_date = (trade_dt - timedelta(days=1)).strftime("%Y-%m-%d")
     trade_price = as_float(transaction.get("price"))
     profile_rows = fmp_get("profile", {"symbol": symbol}, fmp_api_key)
     profile = profile_rows[0] if profile_rows else {}
     income_rows = fmp_get("income-statement", {"symbol": symbol, "period": "quarter", "limit": "12"}, fmp_api_key)
-    latest = latest_before(income_rows, trade_date) or {}
+    latest = latest_before(income_rows, data_cutoff_date) or {}
     prior = same_quarter_prior_year(income_rows, latest) if latest else None
     from_date = (trade_dt - timedelta(days=460)).strftime("%Y-%m-%d")
-    history = fmp_get("historical-price-eod/full", {"symbol": symbol, "from": from_date, "to": trade_date}, fmp_api_key)
-    technicals = compute_technicals(history, trade_date, trade_price)
+    history = fmp_get("historical-price-eod/full", {"symbol": symbol, "from": from_date, "to": data_cutoff_date}, fmp_api_key)
+    technicals = compute_technicals(history, data_cutoff_date, trade_price)
 
     revenue = as_float(latest.get("revenue"))
     gross_profit = as_float(latest.get("grossProfit"))
@@ -244,11 +262,11 @@ def build_facts(transaction: dict, fmp_api_key: str) -> dict:
             "company": transaction.get("description") or profile.get("companyName") or symbol,
             "stockCode": transaction.get("security") or symbol,
             "tradeDate": trade_date,
+            "dataCutoffDate": data_cutoff_date,
             "type": transaction_type,
             "expectedPriceText": f"{price_label}： 約 {transaction.get('ccy') or 'USD'} {round1(trade_price)}，允許價格範圍 ±0.5%",
             "quantity": transaction.get("qty"),
             "broker": transaction.get("counterpart"),
-            "dealNo": transaction.get("deal"),
         },
         "business": {
             "sector": profile.get("sector"),
@@ -270,7 +288,7 @@ def build_facts(transaction: dict, fmp_api_key: str) -> dict:
             "latestNetMarginPct": round2(net_income / revenue * 100) if revenue else None,
             "priorYearSameQuarterNetIncome": prior_net_income if prior else None,
         },
-        "technicalDataOnTradeDate": technicals,
+        "technicalDataAvailableBeforeTradeDate": technicals,
     }
 
 
@@ -304,10 +322,13 @@ def generate_report(facts: dict, gemini_api_key: str) -> dict:
 - 不要寫投資建議報告標題。
 - 投資經理固定寫「投資經理： Alex Chan」。
 - 日期使用交易日。
+- Details of Proposal 不要寫 Deal No。
+- 交易類型只能寫 BUY 或 SELL。
 - Details of Proposal 的價格必須使用 trade.expectedPriceText，不要用「建議」。
 - Investment Strategy 需要 4-5 段：前面基本面，後面技術面。
-- 技術面段落必須明確寫「截至交易日」，並使用 OHLC、VWAP、SMA20/50/100/200、RSI14、成交量 vs 20日均量、ATR14 的實際數字。
-- technical data 只能使用交易日或交易日以前的資料，不可用今天價格。
+- 基本面和技術面只能使用 trade.dataCutoffDate 或以前可取得的資料，不可使用交易日當日或之後的資料。
+- 技術面段落必須明確寫「截至交易日前可取得資料」及 technicalDataAvailableBeforeTradeDate.date，並使用 OHLC、VWAP、SMA20/50/100/200、RSI14、成交量 vs 20日均量、ATR14 的實際數字。
+- 請用 expected price 與交易日前可取得的 close / VWAP / moving averages 比較，不要聲稱使用了交易日當日價格。
 
 Data JSON:
 {json.dumps(facts, ensure_ascii=False, indent=2)}
@@ -355,19 +376,16 @@ def format_details_section(trade: dict) -> list[str]:
         trade.get("expectedPriceText", ""),
         f"數量： {trade.get('quantity', '')} 股",
         f"經紀商： {trade.get('broker', '')}",
-        f"Deal No.: {trade.get('dealNo', '')}",
     ]
 
 
 def format_trade_type_for_report(value: str) -> str:
     normalized = str(value or "").strip().lower()
-    mapping = {
-        "buy to open": "BUY OPEN",
-        "sell to open": "SELL OPEN",
-        "sell to close": "SELL CLOSE",
-        "buy to close": "BUY CLOSE",
-    }
-    return mapping.get(normalized, str(value or "").upper())
+    if normalized == "bo" or "buy" in normalized:
+        return "BUY"
+    if normalized in {"ss", "sh"} or "sell" in normalized:
+        return "SELL"
+    return str(value or "").upper()
 
 
 def pdf_bytes(report: dict, facts: dict) -> bytes:
@@ -433,9 +451,10 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             transaction = payload.get("transaction") or {}
-            transaction_type = str(transaction.get("type", "")).lower()
-            if "open" not in transaction_type:
+            if not is_open_position_type(transaction.get("type", "")):
                 raise ValueError("Strategy report is only available for open positions.")
+            if not is_stock_security(transaction.get("security", "")):
+                raise ValueError("Strategy report is only available for stock trades.")
             env = load_env()
             if not env.get("FMP_API_KEY") or not env.get("GEMINI_API_KEY"):
                 raise RuntimeError("Server API keys are not configured.")
