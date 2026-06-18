@@ -102,10 +102,14 @@ function parseWorkbook(buffer, filename) {
     const headers = rows[0].map((value) => String(value || "").trim());
     const dataRows = rows.slice(1).filter((row) => row.some((cell) => String(cell ?? "").trim() !== ""));
     const transactions = dataRows.map((row) => mapTransaction(headers, row));
+    const inferredCompany = inferCompanyFromFilename(filename);
 
     state.transactions = transactions;
     state.sourceFile = filename;
     state.page = 1;
+    if (inferredCompany) {
+      els.companyInput.value = inferredCompany;
+    }
     updateSummary();
     renderPager();
     renderTable();
@@ -119,6 +123,12 @@ function parseWorkbook(buffer, filename) {
     els.downloadPdfBtn.disabled = true;
     setStatus(error.message, true);
   }
+}
+
+function inferCompanyFromFilename(filename) {
+  const name = String(filename || "").replace(/\.[^.]+$/, "").trim();
+  const match = name.match(/^(.+?)\s+-\s+Securities transactions(?:\s+-|$)/i);
+  return match ? match[1].trim() : "";
 }
 
 function mapTransaction(headers, row) {
@@ -536,7 +546,7 @@ function drawPreTradeCompliancePage(doc, context) {
   doc.setFontSize(9.5);
   y = drawWrappedText(
     doc,
-    "In accordance with the Code of Conduct for Persons Licensed by or Registered with the Securities and Futures Commission, all trade orders must pass the following compliance checklist before execution. The Responsible Officer (RO) must independently review each transaction.",
+    "In accordance with the Code of Conduct for Persons Licensed by or Registered with the Securities and Futures Commission, the Responsible Officer (RO) should tick each item only when the transaction fulfils the requirement and is acceptable for execution.",
     margin,
     y,
     contentWidth,
@@ -549,11 +559,11 @@ function drawPreTradeCompliancePage(doc, context) {
   y += 18;
 
   [
-    "Whether the trade is consistent with the investment objectives of the account / fund.",
-    "Whether the trade breaches any prohibition or restriction in the fund offering documents for specific industries, such as gambling or tobacco, or regions, such as emerging markets.",
-    "Whether the counterparty or issuer is a connected party of the company, and whether all required approvals have been obtained.",
-    "Whether the trader considered price, cost, speed, and the quality of the execution venue.",
-    "Whether the trade is on a restricted list or watch list."
+    "The trade is consistent with the investment objectives of the account / fund.",
+    "The trade complies with all prohibitions and restrictions in the fund offering documents, including restrictions on specific industries such as gambling or tobacco, and regions such as emerging markets.",
+    "Connected-party status for the counterparty or issuer has been checked, and any required approvals have been obtained.",
+    "The trader has considered price, cost, speed, and the quality of the execution venue.",
+    "The trade has been checked against restricted lists and watch lists and is clear for execution."
   ].forEach((item) => {
     y = drawCheckItem(doc, item, margin, y, contentWidth, { checked: state.defaultChecklistChecked });
   });
@@ -566,8 +576,8 @@ function drawPreTradeCompliancePage(doc, context) {
 
   [
     "Approved for execution: all checklist items have passed.",
-    "Conditional approval / exception execution: a minor breach exists. Complete the Exception Explanation below and obtain approval from the Responsible Officer (RO) and Chief Compliance Officer.",
-    "Rejected for execution: a material breach of investment restrictions exists and the instruction has been cancelled."
+    "Any exception or minor issue has been documented below and approved by the Responsible Officer (RO) and Chief Compliance Officer before execution.",
+    "No material breach of investment restrictions has been identified, and the instruction is cleared for execution."
   ].forEach((item) => {
     y = drawCheckItem(doc, item, margin, y, contentWidth);
   });
