@@ -202,7 +202,7 @@ function updateSummary() {
   els.fileMeta.textContent = state.sourceFile ? `已載入：${state.sourceFile}` : "尚未載入檔案。";
 }
 
-function getTransactionPages() {
+function getTransactionGroups() {
   const groups = [];
   const byDate = new Map();
 
@@ -216,19 +216,25 @@ function getTransactionPages() {
     byDate.get(tradeDate).rows.push({ transaction, index });
   });
 
-  return groups.flatMap((group) => {
-    const totalParts = Math.ceil(group.rows.length / TRANSACTIONS_PER_PAGE);
-    const pages = [];
-    for (let offset = 0; offset < group.rows.length; offset += TRANSACTIONS_PER_PAGE) {
-      pages.push({
-        tradeDate: group.tradeDate,
-        part: Math.floor(offset / TRANSACTIONS_PER_PAGE) + 1,
-        totalParts,
-        rows: group.rows.slice(offset, offset + TRANSACTIONS_PER_PAGE)
-      });
-    }
-    return pages;
-  });
+  return groups;
+}
+
+function getPagesForTransactionGroup(group) {
+  const totalParts = Math.ceil(group.rows.length / TRANSACTIONS_PER_PAGE);
+  const pages = [];
+  for (let offset = 0; offset < group.rows.length; offset += TRANSACTIONS_PER_PAGE) {
+    pages.push({
+      tradeDate: group.tradeDate,
+      part: Math.floor(offset / TRANSACTIONS_PER_PAGE) + 1,
+      totalParts,
+      rows: group.rows.slice(offset, offset + TRANSACTIONS_PER_PAGE)
+    });
+  }
+  return pages;
+}
+
+function getTransactionPages() {
+  return getTransactionGroups().flatMap(getPagesForTransactionGroup);
 }
 
 function getPageCount() {
@@ -345,23 +351,166 @@ function generatePdf() {
   }
 
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
-  const transactionPages = getTransactionPages();
-  const pages = transactionPages.length;
+  const transactionGroups = getTransactionGroups();
   const company = els.companyInput.value.trim() || "Transaction Order";
   const source = state.sourceFile || "Uploaded Excel";
+  const zipFiles = transactionGroups.map((group) => {
+    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    const dayPages = getPagesForTransactionGroup(group);
+    const pages = dayPages.length;
 
-  transactionPages.forEach((pageInfo, index) => {
-    const page = index + 1;
-    if (page > 1) doc.addPage("a4", "landscape");
-    const chunk = pageInfo.rows.map(({ transaction }) => transaction);
-    drawPdfPage(doc, { company, source, page, pages, tradeDate: pageInfo.tradeDate, chunk });
+    dayPages.forEach((pageInfo, index) => {
+      const page = index + 1;
+      if (page > 1) doc.addPage("a4", "landscape");
+      const chunk = pageInfo.rows.map(({ transaction }) => transaction);
+      drawPdfPage(doc, { company, source, page, pages, tradeDate: pageInfo.tradeDate, chunk });
+    });
+
+    return {
+      name: buildPdfFilename(company, group.tradeDate),
+      data: new Uint8Array(doc.output("arraybuffer"))
+    };
   });
 
-  const datePart = new Date().toISOString().slice(0, 10);
-  doc.save(`RO_Transaction_Order_Forms_${datePart}.pdf`);
-  setStatus("PDF 已產生，請查看瀏覽器下載項目。");
+  const zipName = `${sanitizeFilenamePart(company)}_transaction_order_pdfs.zip`;
+  downloadBlob(createZipBlob(zipFiles), zipName);
+  setStatus(`PDF ZIP 已產生，共 ${zipFiles.length} 個交易日期檔案。`);
 }
+
+function buildPdfFilename(company, tradeDate) {
+  return `${sanitizeFilenamePart(company)}_${formatTradeDateForFilename(tradeDate)}.pdf`;
+}
+
+function sanitizeFilenamePart(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, " ")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "") || "Transaction_Order";
+}
+
+function formatTradeDateForFilename(tradeDate) {
+  const value = String(tradeDate || "").trim();
+  if (!value || value === "No date") return "no_date";
+
+  const isoMatch = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (isoMatch) {
+    const [, year, month, day] = isoMatch;
+    return `${day.padStart(2, "0")}${month.padStart(2, "0")}${year}`;
+  }
+
+  const shortDateMatch = value.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  if (shortDateMatch) {
+    const [, day, month, year] = shortDateMatch;
+    return `${day.padStart(2, "0")}${month.padStart(2, "0")}${year}`;
+  }
+
+  return sanitizeFilenamePart(value);
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function createZipBlob(files) {
+  const localParts = [];
+  const centralParts = [];
+  const encoder = new TextEncoder();
+  const { dosDate, dosTime } = getDosDateTime(new Date());
+  let offset = 0;
+
+  files.forEach((file) => {
+    const data = file.data instanceof Uint8Array ? file.data : new Uint8Array(file.data);
+    const filename = encoder.encode(file.name);
+    const crc = crc32(data);
+
+    const localHeader = new Uint8Array(30 + filename.length);
+    const localView = new DataView(localHeader.buffer);
+    localView.setUint32(0, 0x04034b50, true);
+    localView.setUint16(4, 20, true);
+    localView.setUint16(6, 0x0800, true);
+    localView.setUint16(8, 0, true);
+    localView.setUint16(10, dosTime, true);
+    localView.setUint16(12, dosDate, true);
+    localView.setUint32(14, crc, true);
+    localView.setUint32(18, data.length, true);
+    localView.setUint32(22, data.length, true);
+    localView.setUint16(26, filename.length, true);
+    localView.setUint16(28, 0, true);
+    localHeader.set(filename, 30);
+
+    const centralHeader = new Uint8Array(46 + filename.length);
+    const centralView = new DataView(centralHeader.buffer);
+    centralView.setUint32(0, 0x02014b50, true);
+    centralView.setUint16(4, 20, true);
+    centralView.setUint16(6, 20, true);
+    centralView.setUint16(8, 0x0800, true);
+    centralView.setUint16(10, 0, true);
+    centralView.setUint16(12, dosTime, true);
+    centralView.setUint16(14, dosDate, true);
+    centralView.setUint32(16, crc, true);
+    centralView.setUint32(20, data.length, true);
+    centralView.setUint32(24, data.length, true);
+    centralView.setUint16(28, filename.length, true);
+    centralView.setUint16(30, 0, true);
+    centralView.setUint16(32, 0, true);
+    centralView.setUint16(34, 0, true);
+    centralView.setUint16(36, 0, true);
+    centralView.setUint32(38, 0, true);
+    centralView.setUint32(42, offset, true);
+    centralHeader.set(filename, 46);
+
+    localParts.push(localHeader, data);
+    centralParts.push(centralHeader);
+    offset += localHeader.length + data.length;
+  });
+
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const endHeader = new Uint8Array(22);
+  const endView = new DataView(endHeader.buffer);
+  endView.setUint32(0, 0x06054b50, true);
+  endView.setUint16(4, 0, true);
+  endView.setUint16(6, 0, true);
+  endView.setUint16(8, files.length, true);
+  endView.setUint16(10, files.length, true);
+  endView.setUint32(12, centralSize, true);
+  endView.setUint32(16, offset, true);
+  endView.setUint16(20, 0, true);
+
+  return new Blob([...localParts, ...centralParts, endHeader], { type: "application/zip" });
+}
+
+function getDosDateTime(date) {
+  const year = Math.max(1980, date.getFullYear());
+  return {
+    dosDate: ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate(),
+    dosTime: (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2)
+  };
+}
+
+function crc32(data) {
+  let crc = 0xffffffff;
+  data.forEach((byte) => {
+    crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ byte) & 0xff];
+  });
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+const CRC32_TABLE = Array.from({ length: 256 }, (_, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  }
+  return value >>> 0;
+});
 
 function drawPdfPage(doc, context) {
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -369,11 +518,13 @@ function drawPdfPage(doc, context) {
   const fullWidth = pageWidth - margin * 2;
 
   doc.setFillColor(229, 231, 235);
-  doc.rect(margin, 18, fullWidth, 24, "F");
+  doc.rect(margin, 18, fullWidth, 34, "F");
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(16);
   doc.setTextColor(17, 24, 39);
-  doc.text("Transaction Order Record", pageWidth / 2, 35, { align: "center" });
+  doc.setFontSize(9);
+  doc.text(fitPdfText(doc, context.company, fullWidth - 24), pageWidth / 2, 29, { align: "center" });
+  doc.setFontSize(15);
+  doc.text("Transaction Order Record", pageWidth / 2, 45, { align: "center" });
 
   drawSignatureBlock(doc, margin, 78, fullWidth, context.tradeDate);
 
@@ -439,6 +590,17 @@ function drawPdfPage(doc, context) {
   doc.setFontSize(9);
   doc.setTextColor(17, 24, 39);
   doc.text("RO sign-off: I confirm that I have reviewed the above transaction order record and supporting details.", margin + 4, footerY + 8);
+}
+
+function fitPdfText(doc, text, maxWidth) {
+  const value = String(text || "").trim();
+  if (!value || doc.getTextWidth(value) <= maxWidth) return value;
+
+  let fitted = value;
+  while (fitted.length > 1 && doc.getTextWidth(`${fitted}...`) > maxWidth) {
+    fitted = fitted.slice(0, -1);
+  }
+  return `${fitted}...`;
 }
 
 function drawSignatureBlock(doc, x, y, width, tradeDate) {
