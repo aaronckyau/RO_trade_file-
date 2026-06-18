@@ -1,7 +1,6 @@
 const TRANSACTIONS_PER_PAGE = 20;
 
 const FIELDS = [
-  { key: "no", label: "序號", pdf: "No.", numeric: true },
   { key: "tradeDate", label: "交易日期", pdf: "Trade Date" },
   { key: "settleDate", label: "交收日期", pdf: "Settle Date" },
   { key: "type", label: "類型", pdf: "Type" },
@@ -97,7 +96,7 @@ function parseWorkbook(buffer, filename) {
 
     const headers = rows[0].map((value) => String(value || "").trim());
     const dataRows = rows.slice(1).filter((row) => row.some((cell) => String(cell ?? "").trim() !== ""));
-    const transactions = dataRows.map((row, index) => mapTransaction(headers, row, index + 1));
+    const transactions = dataRows.map((row) => mapTransaction(headers, row));
 
     state.transactions = transactions;
     state.sourceFile = filename;
@@ -117,7 +116,7 @@ function parseWorkbook(buffer, filename) {
   }
 }
 
-function mapTransaction(headers, row, rowNumber) {
+function mapTransaction(headers, row) {
   const get = (...names) => {
     for (const name of names) {
       const index = headers.findIndex((header) => normalizeHeader(header) === normalizeHeader(name));
@@ -128,7 +127,6 @@ function mapTransaction(headers, row, rowNumber) {
 
   const tradeTypeRaw = cleanText(get("TRADE_TYPE", "TYPE", "Trade Type"));
   return {
-    no: rowNumber,
     tradeDate: formatExcelDate(get("TRADE_DATE", "Trade Date")),
     settleDate: formatExcelDate(get("SETTLEMENT_DATE", "Settlement Date", "Settle Date")),
     type: mapTradeType(tradeTypeRaw),
@@ -709,23 +707,22 @@ function drawPdfPage(doc, context) {
       halign: "center"
     },
     columnStyles: {
-      0: { cellWidth: 24, halign: "center" },
+      0: { cellWidth: 50 },
       1: { cellWidth: 50 },
-      2: { cellWidth: 50 },
-      3: { cellWidth: 56 },
-      4: { cellWidth: 76 },
-      5: { cellWidth: 104 },
-      6: { cellWidth: 44, halign: "right" },
-      7: { cellWidth: 58, halign: "right" },
-      8: { cellWidth: 28 },
-      9: { cellWidth: 66, halign: "right" },
-      10: { cellWidth: 42, halign: "right" },
-      11: { cellWidth: 56, halign: "right" },
-      12: { cellWidth: 82 },
-      13: { cellWidth: 60, halign: "right" }
+      2: { cellWidth: 56 },
+      3: { cellWidth: 82 },
+      4: { cellWidth: 116 },
+      5: { cellWidth: 44, halign: "right" },
+      6: { cellWidth: 58, halign: "right" },
+      7: { cellWidth: 28 },
+      8: { cellWidth: 66, halign: "right" },
+      9: { cellWidth: 42, halign: "right" },
+      10: { cellWidth: 56, halign: "right" },
+      11: { cellWidth: 88 },
+      12: { cellWidth: 60, halign: "right" }
     },
     didParseCell(data) {
-      if (data.section === "body" && [9, 11].includes(data.column.index)) {
+      if (data.section === "body" && [8, 10].includes(data.column.index)) {
         const text = Array.isArray(data.cell.text) ? data.cell.text.join("") : String(data.cell.text || "");
         if (text.includes("(") || text.trim().startsWith("-")) {
           data.cell.styles.textColor = [220, 38, 38];
