@@ -100,6 +100,14 @@
             <img id="roSigPreview" class="signature-preview" alt="RO 簽名預覽" />
           </div>
 
+          <div class="control-block checkbox-block">
+            <label class="checkbox-row" for="defaultChecklistCheckedInput">
+              <input id="defaultChecklistCheckedInput" type="checkbox" checked />
+              <span>預設勾選 compliance checklist</span>
+            </label>
+            <p class="helper-text">套用至 pre-trade / post-trade checklist；decision 選項維持空白。</p>
+          </div>
+
           <div class="control-block notes-block">
             <label for="notesInput">備註</label>
             <textarea id="notesInput" rows="6" placeholder="可選填簽署表格備註"></textarea>
@@ -116,6 +124,6 @@
     <script src="vendor/xlsx.full.min.js"></script>
     <script src="vendor/jspdf.umd.min.js"></script>
     <script src="vendor/jspdf.plugin.autotable.min.js"></script>
-    <script src="app.js?v=20260618no-column"></script>
+    <script src="app.js?v=20260618signature-checks"></script>
   </body>
 </html>

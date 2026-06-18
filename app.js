@@ -21,7 +21,8 @@ const state = {
   sourceFile: "",
   page: 1,
   executedSignature: "",
-  roSignature: ""
+  roSignature: "",
+  defaultChecklistChecked: true
 };
 
 const els = {
@@ -41,6 +42,7 @@ const els = {
   roDateInput: document.getElementById("roDateInput"),
   roSigInput: document.getElementById("roSigInput"),
   roSigPreview: document.getElementById("roSigPreview"),
+  defaultChecklistCheckedInput: document.getElementById("defaultChecklistCheckedInput"),
   notesInput: document.getElementById("notesInput"),
   rowCount: document.getElementById("rowCount"),
   pageCount: document.getElementById("pageCount"),
@@ -64,6 +66,9 @@ function init() {
   });
   els.excelInput.addEventListener("change", onExcelUpload);
   els.downloadPdfBtn.addEventListener("click", generatePdf);
+  els.defaultChecklistCheckedInput.addEventListener("change", () => {
+    state.defaultChecklistChecked = els.defaultChecklistCheckedInput.checked;
+  });
   els.prevPageBtn.addEventListener("click", () => setPage(state.page - 1));
   els.nextPageBtn.addEventListener("click", () => setPage(state.page + 1));
   els.pageSelect.addEventListener("change", (event) => setPage(Number(event.target.value)));
@@ -550,7 +555,7 @@ function drawPreTradeCompliancePage(doc, context) {
     "Whether the trader considered price, cost, speed, and the quality of the execution venue.",
     "Whether the trade is on a restricted list or watch list."
   ].forEach((item) => {
-    y = drawCheckItem(doc, item, margin, y, contentWidth);
+    y = drawCheckItem(doc, item, margin, y, contentWidth, { checked: state.defaultChecklistChecked });
   });
 
   y += 8;
@@ -593,7 +598,7 @@ function drawPostTradeCompliancePage(doc, context) {
     "Where the same trade order was executed across multiple accounts as a block trade, whether the allocation was fair, such as by holding proportion or agreed method, and fully recorded.",
     "Whether any erroneous trade occurred. If yes, whether it has been recorded and handled in accordance with internal procedures."
   ].forEach((item) => {
-    y = drawCheckItem(doc, item, margin, y, contentWidth);
+    y = drawCheckItem(doc, item, margin, y, contentWidth, { checked: state.defaultChecklistChecked });
   });
 
   y += 24;
@@ -611,11 +616,9 @@ function drawPostTradeCompliancePage(doc, context) {
     y,
     contentWidth,
     14
-  ) + 44;
+  ) + 24;
 
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(11);
-  doc.text("Responsible Officer (RO) Signature: ____________________", margin, y);
+  drawRoSignatureArea(doc, margin, y, contentWidth);
 }
 
 function drawComplianceHeader(doc, context, title) {
@@ -646,16 +649,52 @@ function drawWrappedText(doc, text, x, y, maxWidth, lineHeight) {
   return y + lines.length * lineHeight;
 }
 
-function drawCheckItem(doc, text, x, y, maxWidth) {
+function drawCheckItem(doc, text, x, y, maxWidth, options = {}) {
   const boxSize = 8;
   doc.setDrawColor(75, 85, 99);
   doc.rect(x, y - 7, boxSize, boxSize);
+  if (options.checked) {
+    doc.setDrawColor(17, 24, 39);
+    doc.setLineWidth(1.1);
+    doc.line(x + 1.5, y - 3.5, x + 3.4, y - 1.2);
+    doc.line(x + 3.4, y - 1.2, x + 7, y - 7.6);
+    doc.setLineWidth(0.2);
+  }
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9.5);
   doc.setTextColor(17, 24, 39);
   const lines = doc.splitTextToSize(text, maxWidth - 20);
   doc.text(lines, x + 16, y);
   return y + Math.max(16, lines.length * 13);
+}
+
+function drawRoSignatureArea(doc, x, y, width) {
+  const label = "Responsible Officer (RO) Signature:";
+  const labelWidth = 172;
+  const boxWidth = 260;
+  const boxHeight = 56;
+  const boxX = x + labelWidth + 10;
+  const boxY = y - 18;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(11);
+  doc.setTextColor(17, 24, 39);
+  doc.text(label, x, y + 13);
+
+  doc.setDrawColor(107, 114, 128);
+  doc.setFillColor(255, 255, 255);
+  doc.rect(boxX, boxY, boxWidth, boxHeight, "FD");
+
+  addSignatureImage(doc, state.roSignature, boxX + 10, boxY + 8, boxWidth - 20, boxHeight - 16);
+
+  const roName = els.roNameInput.value.trim();
+  const roDate = els.roDateInput.value.trim();
+  const meta = [roName, roDate].filter(Boolean).join("  |  ");
+  if (meta) {
+    doc.setFontSize(8);
+    doc.setTextColor(75, 85, 99);
+    doc.text(fitPdfText(doc, meta, width - labelWidth - boxWidth - 28), boxX + boxWidth + 12, y + 13);
+  }
 }
 
 function formatDisplayTradeDate(tradeDate) {
