@@ -579,7 +579,7 @@ function drawPreTradeCompliancePage(doc, context) {
     "Any exception or minor issue has been documented below and approved by the Responsible Officer (RO) and Chief Compliance Officer before execution.",
     "No material breach of investment restrictions has been identified, and the instruction is cleared for execution."
   ].forEach((item) => {
-    y = drawCheckItem(doc, item, margin, y, contentWidth);
+    y = drawCheckItem(doc, item, margin, y, contentWidth, { checked: state.defaultChecklistChecked });
   });
 
   y += 10;
@@ -604,9 +604,9 @@ function drawPostTradeCompliancePage(doc, context) {
   y += 22;
 
   [
-    "Whether the executed trade quantity, price, and limit price are consistent with the pre-trade instruction, or are within a reasonable slippage range.",
-    "Where the same trade order was executed across multiple accounts as a block trade, whether the allocation was fair, such as by holding proportion or agreed method, and fully recorded.",
-    "Whether any erroneous trade occurred. If yes, whether it has been recorded and handled in accordance with internal procedures."
+    "The executed trade quantity, price, and limit price have been checked and are consistent with the pre-trade instruction, or are within a reasonable slippage range.",
+    "Where the same trade order was executed across multiple accounts as a block trade, the allocation has been checked, is fair based on holding proportion or agreed method, and is fully recorded.",
+    "The trade has been checked for erroneous execution, and any erroneous trade identified has been recorded and handled in accordance with internal procedures."
   ].forEach((item) => {
     y = drawCheckItem(doc, item, margin, y, contentWidth, { checked: state.defaultChecklistChecked });
   });
@@ -696,15 +696,6 @@ function drawRoSignatureArea(doc, x, y, width) {
   doc.rect(boxX, boxY, boxWidth, boxHeight, "FD");
 
   addSignatureImage(doc, state.roSignature, boxX + 10, boxY + 8, boxWidth - 20, boxHeight - 16);
-
-  const roName = els.roNameInput.value.trim();
-  const roDate = els.roDateInput.value.trim();
-  const meta = [roName, roDate].filter(Boolean).join("  |  ");
-  if (meta) {
-    doc.setFontSize(8);
-    doc.setTextColor(75, 85, 99);
-    doc.text(fitPdfText(doc, meta, width - labelWidth - boxWidth - 28), boxX + boxWidth + 12, y + 13);
-  }
 }
 
 function formatDisplayTradeDate(tradeDate) {
