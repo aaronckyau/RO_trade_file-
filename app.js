@@ -79,6 +79,7 @@ const els = {
   nextPageBtn: document.getElementById("nextPageBtn"),
   pageSelect: document.getElementById("pageSelect"),
   statusText: document.getElementById("statusText"),
+  strategyStatusText: document.getElementById("strategyStatusText"),
   settingsStatus: document.getElementById("settingsStatus"),
   table: document.getElementById("transactionTable"),
   thead: document.querySelector("#transactionTable thead"),
@@ -359,7 +360,7 @@ function renderTable() {
 
 function renderStrategyBlankState() {
   els.strategyThead.innerHTML = "";
-  els.strategyTbody.innerHTML = `<tr><td class="blank-state" colspan="${FIELDS.length}">請先上傳 Excel 檔案，以建立 strategy report 清單。</td></tr>`;
+  els.strategyTbody.innerHTML = `<tr><td class="blank-state" colspan="${FIELDS.length + 1}">請先上傳 Excel 檔案，以建立 strategy report 清單。</td></tr>`;
 }
 
 function renderStrategyTable() {
@@ -373,11 +374,12 @@ function renderStrategyTable() {
     state.strategyTypeSort
   );
 
-  els.strategyThead.innerHTML = `<tr>${FIELDS.map((field) => renderHeaderCell(field, "strategy")).join("")}</tr>`;
-  els.strategyTbody.innerHTML = rows.map(({ transaction }) => {
-    return `<tr>${FIELDS.map((field) => renderReadOnlyCell(transaction, field)).join("")}</tr>`;
+  els.strategyThead.innerHTML = `<tr><th>Report</th>${FIELDS.map((field) => renderHeaderCell(field, "strategy")).join("")}</tr>`;
+  els.strategyTbody.innerHTML = rows.map(({ transaction, index }) => {
+    return `<tr>${renderStrategyActionCell(transaction, index)}${FIELDS.map((field) => renderReadOnlyCell(transaction, field)).join("")}</tr>`;
   }).join("");
   bindSortButtons(els.strategyThead);
+  bindStrategyReportButtons();
 }
 
 function renderHeaderCell(field, tableName) {
@@ -426,6 +428,81 @@ function renderReadOnlyCell(transaction, field) {
   const negative = isNegative(value) ? " negative" : "";
   const numeric = field.numeric ? " numeric" : "";
   return `<td class="${numeric}${negative}">${escapeHtml(value)}</td>`;
+}
+
+function renderStrategyActionCell(transaction, sourceIndex) {
+  if (!isOpenPosition(transaction)) {
+    return `<td><span class="muted-label">N/A</span></td>`;
+  }
+  return `<td><button class="small-action-btn" type="button" data-report-index="${sourceIndex}">生成 PDF</button></td>`;
+}
+
+function bindStrategyReportButtons() {
+  els.strategyTbody.querySelectorAll("[data-report-index]").forEach((button) => {
+    button.addEventListener("click", () => generateStrategyReport(Number(button.dataset.reportIndex), button));
+  });
+}
+
+function isOpenPosition(transaction) {
+  const type = cleanText(transaction.type).toLowerCase();
+  return type.includes("open");
+}
+
+async function generateStrategyReport(index, button) {
+  const transaction = state.transactions[index];
+  if (!transaction || !isOpenPosition(transaction)) return;
+
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = "生成中...";
+  setStrategyStatus(`正在生成 ${transaction.security} strategy report...`);
+
+  try {
+    const response = await fetch(getStrategyReportApiUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ transaction })
+    });
+
+    if (!response.ok) {
+      let message = "Strategy report generation failed.";
+      try {
+        const error = await response.json();
+        message = error.error || message;
+      } catch {
+        // Keep the generic message if the server did not return JSON.
+      }
+      throw new Error(message);
+    }
+
+    const blob = await response.blob();
+    const filename = getDownloadFilename(response, transaction);
+    downloadBlob(blob, filename);
+    setStrategyStatus(`${transaction.security} strategy report PDF 已生成。`);
+  } catch (error) {
+    setStrategyStatus(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+}
+
+function getStrategyReportApiUrl() {
+  return window.location.pathname.startsWith("/RO_transaction/")
+    ? "/RO_transaction/api/strategy-report"
+    : "/api/strategy-report";
+}
+
+function getDownloadFilename(response, transaction) {
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename="?([^"]+)"?/i);
+  if (match) return match[1];
+  return `${sanitizeFilenamePart(transaction.security || "strategy")}_${formatTradeDateForFilename(transaction.tradeDate)}_strategy_report.pdf`;
+}
+
+function setStrategyStatus(message, isError = false) {
+  els.strategyStatusText.textContent = message;
+  els.strategyStatusText.style.color = isError ? "#b91c1c" : "";
 }
 
 function onCellEdit(event) {

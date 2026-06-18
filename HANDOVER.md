@@ -33,6 +33,7 @@ Core system means:
 - ZIP generation and daily PDF filename logic.
 - Existing PDF compliance page structure.
 - Existing VPS route `/RO_transaction/`.
+- Existing API proxy route `/RO_transaction/api/`.
 
 When adding new functions, prefer adding isolated UI controls or helper functions around the current flow. Avoid rewriting the app, changing routes, changing file names, changing the upload contract, or replacing the PDF/ZIP generation approach unless the user clearly requests that.
 
@@ -52,8 +53,12 @@ Main files:
 - `vendor/xlsx.full.min.js` - Excel parser.
 - `vendor/jspdf.umd.min.js` - PDF generator.
 - `vendor/jspdf.plugin.autotable.min.js` - PDF table renderer.
+- `api_server.py` - server-side Gemini/FMP strategy report API.
+- `requirements-api.txt` - Python dependencies for the strategy report API.
 
 This is a static browser app. There is no build step and no package manager currently required.
+
+The strategy report feature adds an isolated Python API for server-side key handling and PDF report generation. Do not put API keys in front-end JavaScript.
 
 Local development server:
 
@@ -149,6 +154,30 @@ $remoteDir='/RO_transaction'
 scp -i $sshKey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$knownHosts index.html app.js styles.css ${remote}:${remoteDir}/
 ```
 
+If `api_server.py` or `requirements-api.txt` changes, also deploy them and restart the API:
+
+```powershell
+scp -i $sshKey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$knownHosts api_server.py requirements-api.txt ${remote}:${remoteDir}/
+ssh -i $sshKey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$knownHosts $remote "systemctl restart ro-transaction-api && systemctl is-active ro-transaction-api"
+```
+
+Server-side API secrets are stored outside the web root:
+
+```text
+/etc/ro-transaction.env
+```
+
+This file should be root-readable only and should contain `FMP_API_KEY` and `GEMINI_API_KEY`.
+
+API service:
+
+```text
+systemd service: ro-transaction-api
+local listen: http://127.0.0.1:8788
+public proxy: /RO_transaction/api/
+health: https://www.4mstrategy.com/RO_transaction/api/health
+```
+
 Verify deployed files:
 
 ```powershell
@@ -162,6 +191,7 @@ Verify public URL:
 
 ```powershell
 curl.exe -s https://www.4mstrategy.com/RO_transaction/ | Select-String -Pattern 'app.js'
+curl.exe -s https://www.4mstrategy.com/RO_transaction/api/health
 ```
 
 If `index.html` changes the app.js cache-busting query string, verify the new version is visible from the public URL.
@@ -180,6 +210,7 @@ Key areas:
 - `drawPostTradeCompliancePage()` draws the last page of each PDF.
 - `createZipBlob()` creates the ZIP in-browser without adding dependencies.
 - `buildPdfFilename()` creates the daily PDF filename.
+- Strategy Report tab calls `/RO_transaction/api/strategy-report` for open positions and downloads the returned PDF.
 
 ## Current PDF Structure
 

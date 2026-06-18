@@ -402,6 +402,23 @@ th {
   text-decoration: underline;
 }
 
+.small-action-btn {
+  min-height: 28px;
+  padding: 0 10px;
+  white-space: nowrap;
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.small-action-btn:disabled {
+  opacity: 0.6;
+}
+
+.muted-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 td[contenteditable="true"] {
   background: #ffffff;
 }
