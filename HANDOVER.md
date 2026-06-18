@@ -200,7 +200,8 @@ If `index.html` changes the app.js cache-busting query string, verify the new ve
 
 Key areas:
 
-- `parseWorkbook()` reads the first Excel worksheet.
+- Upload supports selecting multiple Excel / CSV files at once. `parseUploadedWorkbooks()` parses each selected file and merges the transactions into one working set.
+- `parseWorkbook()` reads the first worksheet from one selected workbook.
 - `mapTransaction()` maps Excel columns into normalized transaction objects.
 - `getTransactionGroups()` groups rows by trade date.
 - `getPagesForTransactionGroup()` splits one day into pages of 20 rows.

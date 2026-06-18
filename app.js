@@ -135,37 +135,38 @@ function renderMainTabs() {
 }
 
 async function onExcelUpload(event) {
-  const file = event.target.files?.[0];
-  if (!file) return;
-  const buffer = await file.arrayBuffer();
-  parseWorkbook(buffer, file.name);
+  const files = Array.from(event.target.files || []);
+  if (!files.length) return;
+  await parseUploadedWorkbooks(files);
 }
 
-function parseWorkbook(buffer, filename) {
+async function parseUploadedWorkbooks(files) {
   try {
-    const workbook = XLSX.read(buffer, { type: "array", cellDates: false });
-    const firstSheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[firstSheetName];
-    const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
-    if (!rows.length) throw new Error("這份 workbook 沒有任何資料列。");
-
-    const headers = rows[0].map((value) => String(value || "").trim());
-    const dataRows = rows.slice(1).filter((row) => row.some((cell) => String(cell ?? "").trim() !== ""));
-    const transactions = dataRows.map((row) => mapTransaction(headers, row));
-    const inferredCompany = inferCompanyFromFilename(filename);
+    const parsedFiles = [];
+    for (const file of files) {
+      const buffer = await file.arrayBuffer();
+      parsedFiles.push(parseWorkbook(buffer, file.name));
+    }
+    const transactions = parsedFiles.flatMap((parsed) => parsed.transactions);
+    if (!transactions.length) throw new Error("已選擇的 workbook 沒有任何交易資料列。");
+    const companyNames = [...new Set(parsedFiles.map((parsed) => parsed.inferredCompany).filter(Boolean))];
+    if (companyNames.length > 1) {
+      throw new Error(`多個檔案的基金 / 實體名稱不同：${companyNames.join("、")}。請分開處理。`);
+    }
+    const sourceFiles = parsedFiles.map((parsed) => parsed.filename);
 
     state.transactions = transactions;
-    state.sourceFile = filename;
+    state.sourceFile = formatSourceFiles(sourceFiles);
     state.page = 1;
-    if (inferredCompany) {
-      els.companyInput.value = inferredCompany;
+    if (companyNames.length === 1) {
+      els.companyInput.value = companyNames[0];
     }
     updateSummary();
     renderPager();
     renderTable();
     renderStrategyTable();
     els.downloadPdfBtn.disabled = !transactions.length;
-    setStatus(`已從 ${filename} 載入 ${transactions.length} 筆交易。產生 PDF 前可以直接修改表格內容。`);
+    setStatus(`已從 ${sourceFiles.length} 個檔案載入 ${transactions.length} 筆交易。產生 PDF 前可以直接修改表格內容。`);
   } catch (error) {
     state.transactions = [];
     state.sourceFile = "";
@@ -175,6 +176,28 @@ function parseWorkbook(buffer, filename) {
     els.downloadPdfBtn.disabled = true;
     setStatus(error.message, true);
   }
+}
+
+function parseWorkbook(buffer, filename) {
+  const workbook = XLSX.read(buffer, { type: "array", cellDates: false });
+  const firstSheetName = workbook.SheetNames[0];
+  if (!firstSheetName) throw new Error(`${filename} 沒有 worksheet。`);
+  const worksheet = workbook.Sheets[firstSheetName];
+  const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+  if (!rows.length) throw new Error(`${filename} 沒有任何資料列。`);
+
+  const headers = rows[0].map((value) => String(value || "").trim());
+  const dataRows = rows.slice(1).filter((row) => row.some((cell) => String(cell ?? "").trim() !== ""));
+  return {
+    filename,
+    inferredCompany: inferCompanyFromFilename(filename),
+    transactions: dataRows.map((row) => mapTransaction(headers, row))
+  };
+}
+
+function formatSourceFiles(filenames) {
+  if (filenames.length <= 3) return filenames.join(", ");
+  return `${filenames.slice(0, 3).join(", ")} 等 ${filenames.length} 個檔案`;
 }
 
 function inferCompanyFromFilename(filename) {

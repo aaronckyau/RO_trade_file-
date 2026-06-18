@@ -12,7 +12,7 @@
         <div class="top-copy">
           <div class="eyebrow">Transaction Compliance Workspace</div>
           <h1>RO 交易指令 PDF 產生器</h1>
-          <p>上傳交易 Excel、檢視或修改表格，設定簽名與日期後，匯出每頁 20 筆交易的 PDF。</p>
+          <p>上傳一份或多份交易 Excel、檢視或修改表格，設定簽名與日期後，匯出每頁 20 筆交易的 PDF。</p>
         </div>
         <div class="top-actions">
           <button id="settingsBtn" type="button" class="ghost-btn">設定</button>
@@ -30,7 +30,7 @@
         <section class="control-grid compact-controls" aria-label="上傳交易資料">
           <div class="control-block upload-block">
             <label for="excelInput">交易 Excel</label>
-            <input id="excelInput" type="file" accept=".xlsx,.xls,.csv" />
+            <input id="excelInput" type="file" accept=".xlsx,.xls,.csv" multiple />
             <div id="fileMeta" class="meta-line">尚未載入檔案。</div>
           </div>
         </section>
@@ -143,6 +143,6 @@
     <script src="vendor/xlsx.full.min.js"></script>
     <script src="vendor/jspdf.umd.min.js"></script>
     <script src="vendor/jspdf.plugin.autotable.min.js"></script>
-    <script src="app.js?v=20260618strategy-report-stock-cutoff"></script>
+    <script src="app.js?v=20260618multi-excel-upload"></script>
   </body>
 </html>
