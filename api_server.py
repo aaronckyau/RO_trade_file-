@@ -232,9 +232,9 @@ def compute_technicals(history: list[dict], cutoff_date: str, trade_price: float
     }
 
 
-def build_facts(transaction: dict, fmp_api_key: str, kind: str = "stock") -> dict:
+def build_facts(transaction: dict, fmp_api_key: str, kind: str = "stock", underlying_symbol: str = "") -> dict:
     if kind != "stock":
-        return build_derivative_facts(transaction, fmp_api_key, kind)
+        return build_derivative_facts(transaction, fmp_api_key, kind, underlying_symbol)
     symbol = parse_symbol(transaction.get("security", ""))
     if not symbol:
         raise ValueError("Missing stock symbol.")
@@ -300,24 +300,61 @@ def build_facts(transaction: dict, fmp_api_key: str, kind: str = "stock") -> dic
     }
 
 
-def build_derivative_facts(transaction: dict, fmp_api_key: str, kind: str) -> dict:
-    """Phase 1: option / future report uses pre-trade technicals only.
+# Index futures rarely return EOD data under their own/root symbol on FMP.
+# Fall back to a tradable ETF proxy that tracks the same index.
+INDEX_PROXY = {
+    "NQ": "QQQ", "MNQ": "QQQ", "NDX": "QQQ", "^NDX": "QQQ",
+    "ES": "SPY", "MES": "SPY", "SPX": "SPY", "^GSPC": "SPY", "^SPX": "SPY",
+    "YM": "DIA", "MYM": "DIA", "DJI": "DIA", "^DJI": "DIA",
+    "RTY": "IWM", "M2K": "IWM", "RUT": "IWM", "^RUT": "IWM",
+}
 
-    Company fundamentals (profile, income statement) do not apply to derivatives.
-    Underlying-stock fundamentals are added in Phase 2 once symbol parsing is verified.
-    """
-    symbol = parse_symbol(transaction.get("security", ""))
+
+def fetch_history(symbol: str, from_date: str, to_date: str, fmp_api_key: str) -> list[dict]:
     if not symbol:
-        raise ValueError("Missing security symbol.")
+        return []
+    try:
+        return fmp_get("historical-price-eod/full", {"symbol": symbol, "from": from_date, "to": to_date}, fmp_api_key) or []
+    except urllib.error.HTTPError:
+        return []
+
+
+def resolve_market_symbol(underlying: str, raw_symbol: str, from_date: str, to_date: str, fmp_api_key: str):
+    """Pick a symbol that actually returns pre-trade EOD data.
+
+    Try the AI-provided underlying first, then an ETF proxy for index futures,
+    then the raw contract root. Returns (history, used_symbol) or ([], "").
+    """
+    candidates = []
+    for candidate in (underlying, INDEX_PROXY.get(underlying.upper()), raw_symbol):
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    for candidate in candidates:
+        history = fetch_history(candidate, from_date, to_date, fmp_api_key)
+        if history:
+            return history, candidate
+    return [], ""
+
+
+def build_derivative_facts(transaction: dict, fmp_api_key: str, kind: str, underlying_symbol: str = "") -> dict:
+    """Option / future report tracks the UNDERLYING's pre-trade price action.
+
+    FMP cannot price broker contract codes like MNQH6, so we use the underlying
+    (AI-provided) symbol, with an ETF proxy fallback for index futures.
+    Company fundamentals do not apply; this is technicals-only.
+    """
+    raw_symbol = parse_symbol(transaction.get("security", ""))
+    underlying = (underlying_symbol or "").strip().upper()
     trade_dt = parse_trade_date(transaction.get("tradeDate", ""))
     trade_date = trade_dt.strftime("%Y-%m-%d")
     data_cutoff_date = (trade_dt - timedelta(days=1)).strftime("%Y-%m-%d")
     trade_price = as_float(transaction.get("price"))
     from_date = (trade_dt - timedelta(days=460)).strftime("%Y-%m-%d")
-    history = fmp_get("historical-price-eod/full", {"symbol": symbol, "from": from_date, "to": data_cutoff_date}, fmp_api_key)
+    history, used_symbol = resolve_market_symbol(underlying, raw_symbol, from_date, data_cutoff_date, fmp_api_key)
     if not history:
-        raise ValueError("No pre-trade market data is available for this contract.")
+        raise ValueError("No pre-trade market data is available for the underlying.")
     technicals = compute_technicals(history, data_cutoff_date, trade_price)
+    technicals["underlyingSymbolUsed"] = used_symbol
 
     transaction_type = str(transaction.get("type", "")).strip()
     is_buy = "buy" in transaction_type.lower()
@@ -326,14 +363,15 @@ def build_derivative_facts(transaction: dict, fmp_api_key: str, kind: str) -> di
     return {
         "trade": {
             "investmentManager": "Alex Chan",
-            "company": transaction.get("description") or symbol,
-            "stockCode": transaction.get("security") or symbol,
+            "company": transaction.get("description") or raw_symbol,
+            "stockCode": transaction.get("security") or raw_symbol,
             "tradeDate": trade_date,
             "dataCutoffDate": data_cutoff_date,
             "type": transaction_type,
             "expectedPriceText": f"{price_label}： 約 {transaction.get('ccy') or 'USD'} {round1(trade_price)}，允許價格範圍 ±0.5%",
             "quantity": transaction.get("qty"),
             "broker": transaction.get("counterpart"),
+            "underlyingSymbol": used_symbol,
         },
         "business": {"sector": None, "industry": None, "description": None},
         "fundamentalDataAvailableBeforeTradeDate": None,
@@ -364,7 +402,9 @@ def generate_report(facts: dict, gemini_api_key: str) -> dict:
     if is_derivative:
         strategy_rule = (
             "- 此為期權／期貨交易，沒有公司基本面資料 (fundamentalDataAvailableBeforeTradeDate 為 null)。\n"
-            "- Investment Strategy 需要 3-5 段，以技術面為主：價格動能、進出場時機、波動 (ATR)、支撐阻力、成交量。\n"
+            "- 技術面資料是「標的」(technicalDataAvailableBeforeTradeDate.underlyingSymbolUsed) 的價格走勢，"
+            "不是合約本身；請以標的走勢說明交易判斷。\n"
+            "- Investment Strategy 需要 3-5 段，以技術面為主：標的價格動能、進出場時機、波動 (ATR)、支撐阻力、成交量。\n"
             "- 不要杜撰公司營收、毛利率或盈利資料。"
         )
     else:
@@ -536,7 +576,9 @@ def classify_transactions(items: list[dict], gemini_api_key: str) -> list[dict]:
         "- future：期貨合約 (例如 MNQH6、MNQ 20MAR26、ES、NQ 等代號)。\n"
         "- unsupported：貨幣 (curncy)、指數本身 (index)、商品 (cmdty) 或無法判斷。\n"
         "underlyingSymbol：標的物可在美股市場查到的代號 (期權/期貨填標的，股票填自身)，"
-        "無法判斷則填空字串。不要更動任何其他資料。\n\n"
+        "無法判斷則填空字串。指數型期貨請填可交易的對應 ETF (Nasdaq-100→QQQ、"
+        "S&P500→SPY、Dow→DIA、Russell2000→IWM)；個股期權填標的股票代號。"
+        "不要更動任何其他資料。\n\n"
         f"Data JSON:\n{json.dumps(rows, ensure_ascii=False)}"
     )
     body = {
@@ -606,7 +648,7 @@ class Handler(BaseHTTPRequestHandler):
             env = load_env()
             if not env.get("FMP_API_KEY") or not env.get("GEMINI_API_KEY"):
                 raise RuntimeError("Server API keys are not configured.")
-            facts = build_facts(transaction, env["FMP_API_KEY"], kind)
+            facts = build_facts(transaction, env["FMP_API_KEY"], kind, str(payload.get("underlyingSymbol", "")))
             report = generate_report(facts, env["GEMINI_API_KEY"])
             pdf = pdf_bytes(report, facts)
             filename = safe_filename(f"{facts['trade']['stockCode']}_{facts['trade']['tradeDate']}_strategy_report.pdf")
