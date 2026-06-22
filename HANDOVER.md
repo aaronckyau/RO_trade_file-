@@ -201,6 +201,7 @@ If `index.html` changes the app.js cache-busting query string, verify the new ve
 Key areas:
 
 - Upload supports selecting multiple Excel / CSV files at once. `parseUploadedWorkbooks()` parses each selected file and merges the transactions into one working set.
+- `renderFileMeta()` shows uploaded filenames line by line, defaults to the first three, and provides Show more / Show less when more files are loaded.
 - `parseWorkbook()` reads the first worksheet from one selected workbook.
 - `mapTransaction()` maps Excel columns into normalized transaction objects.
 - `getTransactionGroups()` groups rows by trade date.

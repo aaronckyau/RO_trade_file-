@@ -61,6 +61,8 @@ const FIELDS = [
 const state = {
   transactions: [],
   sourceFile: "",
+  sourceFiles: [],
+  sourceFilesExpanded: false,
   page: 1,
   executedSignature: "",
   roSignature: "",
@@ -177,6 +179,8 @@ async function parseUploadedWorkbooks(files) {
 
     state.transactions = transactions;
     state.sourceFile = formatSourceFiles(sourceFiles);
+    state.sourceFiles = sourceFiles;
+    state.sourceFilesExpanded = false;
     state.page = 1;
     if (companyNames.length === 1) {
       els.companyInput.value = companyNames[0];
@@ -190,6 +194,8 @@ async function parseUploadedWorkbooks(files) {
   } catch (error) {
     state.transactions = [];
     state.sourceFile = "";
+    state.sourceFiles = [];
+    state.sourceFilesExpanded = false;
     updateSummary();
     renderBlankState();
     renderStrategyBlankState();
@@ -218,6 +224,38 @@ function parseWorkbook(buffer, filename) {
 function formatSourceFiles(filenames) {
   if (filenames.length <= 3) return filenames.join(", ");
   return `${filenames.slice(0, 3).join(", ")} 等 ${filenames.length} 個檔案`;
+}
+
+function renderFileMeta() {
+  if (!state.sourceFiles.length) {
+    els.fileMeta.textContent = "尚未載入檔案。";
+    return;
+  }
+
+  const visibleFiles = state.sourceFilesExpanded ? state.sourceFiles : state.sourceFiles.slice(0, 3);
+  const hiddenCount = state.sourceFiles.length - visibleFiles.length;
+  const fileItems = visibleFiles
+    .map((filename) => `<li>${escapeHtml(filename)}</li>`)
+    .join("");
+  const toggle = hiddenCount > 0 || state.sourceFilesExpanded
+    ? `<button class="file-meta-toggle" type="button" data-file-meta-toggle>${state.sourceFilesExpanded ? "Show less" : `Show more (${hiddenCount})`}</button>`
+    : "";
+
+  els.fileMeta.innerHTML = `
+    <div>已載入：</div>
+    <ol class="file-meta-list">
+      ${fileItems}
+    </ol>
+    ${toggle}
+  `;
+
+  const toggleButton = els.fileMeta.querySelector("[data-file-meta-toggle]");
+  if (toggleButton) {
+    toggleButton.addEventListener("click", () => {
+      state.sourceFilesExpanded = !state.sourceFilesExpanded;
+      renderFileMeta();
+    });
+  }
 }
 
 function inferCompanyFromFilename(filename) {
@@ -301,7 +339,7 @@ function updateSummary() {
   const pages = getPageCount();
   els.rowCount.textContent = state.transactions.length;
   els.pageCount.textContent = pages;
-  els.fileMeta.textContent = state.sourceFile ? `已載入：${state.sourceFile}` : "尚未載入檔案。";
+  renderFileMeta();
 }
 
 function getTransactionGroups() {

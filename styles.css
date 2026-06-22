@@ -270,6 +270,31 @@ button:disabled {
   font-size: 13px;
 }
 
+.file-meta-list {
+  margin: 4px 0 0 18px;
+  padding: 0;
+}
+
+.file-meta-list li {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.file-meta-toggle {
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.file-meta-toggle:hover {
+  color: var(--accent-dark);
+  text-decoration: underline;
+}
+
 .signature-preview {
   display: none;
   max-height: 48px;
