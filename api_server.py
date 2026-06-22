@@ -409,7 +409,13 @@ def generate_report(facts: dict, gemini_api_key: str) -> dict:
         )
     else:
         strategy_rule = (
-            "- Investment Strategy 需要 4-5 段：前面基本面，後面技術面。必須基本面 + 技術面，不可全部是 fundamental。"
+            "- Investment Strategy 需要 4-5 段，必須基本面 + 技術面，不可全部是 fundamental。\n"
+            "- 報告重點是「為何在 trade.expectedPriceText 的預期價格進場是合理的」，不是泛泛介紹公司。\n"
+            "- 前 1-2 段用基本面說明這個價位反映的成長/盈利/產業邏輯為何支持此進場價。\n"
+            "- 後 2-3 段用技術面具體論證價位合理性：把 expected price 與交易日前可取得的 "
+            "close、VWAP、SMA20/50/200、20日高低、52週高低、支撐阻力比較，"
+            "說明此價位相對這些參考點是否具吸引力 (例如貼近支撐、回檔至均線、未追高)。\n"
+            "- 必須明確回答：為什麼這個預期買入/賣出價格是合理的進場/出場點。"
         )
     prompt = f"""
 你是內部投資交易策略報告撰寫助手。請只使用 JSON 事實，不要加入未提供的新聞、price target、broker rating 或資料來源名稱。
@@ -643,8 +649,8 @@ class Handler(BaseHTTPRequestHandler):
             kind = payload.get("kind") if payload.get("kind") in {"stock", "option", "future"} else None
             if kind is None:
                 kind = security_kind(transaction.get("security", ""))
-            if kind is None:
-                raise ValueError("Strategy report is only available for stock, option, or future trades.")
+            if kind != "stock":
+                raise ValueError("Strategy report is only available for stock trades.")
             env = load_env()
             if not env.get("FMP_API_KEY") or not env.get("GEMINI_API_KEY"):
                 raise RuntimeError("Server API keys are not configured.")

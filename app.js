@@ -582,7 +582,7 @@ function resolvedKind(transaction) {
 }
 
 function canGenerateStrategyReport(transaction) {
-  return isOpenPosition(transaction) && resolvedKind(transaction) !== null;
+  return isOpenPosition(transaction) && resolvedKind(transaction) === "stock";
 }
 
 async function classifyTransactions() {
