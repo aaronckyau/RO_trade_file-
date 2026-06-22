@@ -495,6 +495,86 @@ def pdf_bytes(report: dict, facts: dict) -> bytes:
     return output.getvalue()
 
 
+def classify_transactions(items: list[dict], gemini_api_key: str) -> list[dict]:
+    """Classify each row's security kind and underlying symbol with the LLM.
+
+    The model only picks from a closed set of kinds and extracts a likely
+    underlying ticker. It never alters trade numbers. Rule-based security_kind
+    is the fallback per row if the model omits or returns an invalid kind.
+    """
+    rows = [
+        {
+            "index": index,
+            "security": str(item.get("security", "")),
+            "description": str(item.get("description", "")),
+        }
+        for index, item in enumerate(items)
+    ]
+    schema = {
+        "type": "object",
+        "properties": {
+            "rows": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "index": {"type": "integer"},
+                        "kind": {"type": "string", "enum": ["stock", "option", "future", "unsupported"]},
+                        "underlyingSymbol": {"type": "string"},
+                    },
+                    "required": ["index", "kind", "underlyingSymbol"],
+                },
+            }
+        },
+        "required": ["rows"],
+    }
+    prompt = (
+        "你是金融交易資料分類助手。下面每一列有 security 代號與 description。\n"
+        "請判斷每列的證券型別，kind 只能是 stock / option / future / unsupported：\n"
+        "- stock：個股 / 股票 / equity。\n"
+        "- option：股票或指數選擇權 (call / put)。\n"
+        "- future：期貨合約 (例如 MNQH6、MNQ 20MAR26、ES、NQ 等代號)。\n"
+        "- unsupported：貨幣 (curncy)、指數本身 (index)、商品 (cmdty) 或無法判斷。\n"
+        "underlyingSymbol：標的物可在美股市場查到的代號 (期權/期貨填標的，股票填自身)，"
+        "無法判斷則填空字串。不要更動任何其他資料。\n\n"
+        f"Data JSON:\n{json.dumps(rows, ensure_ascii=False)}"
+    )
+    body = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0,
+            "maxOutputTokens": 4000,
+            "responseMimeType": "application/json",
+            "responseSchema": schema,
+        },
+    }
+    response = http_json(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
+        headers={"x-goog-api-key": gemini_api_key},
+        data=body,
+        timeout=70,
+    )
+    text = "\n".join(part.get("text", "") for part in response["candidates"][0]["content"]["parts"])
+    parsed = json.loads(text)
+
+    by_index = {}
+    for row in parsed.get("rows", []):
+        try:
+            by_index[int(row.get("index"))] = row
+        except (TypeError, ValueError):
+            continue
+
+    results = []
+    for index, item in enumerate(items):
+        row = by_index.get(index, {})
+        kind = row.get("kind")
+        if kind not in {"stock", "option", "future"}:
+            kind = security_kind(item.get("security", ""))  # rule-based fallback
+        underlying = str(row.get("underlyingSymbol", "")).strip().upper()
+        results.append({"index": index, "kind": kind, "underlyingSymbol": underlying})
+    return results
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "ROTransactionAPI/1.0"
 
@@ -505,7 +585,11 @@ class Handler(BaseHTTPRequestHandler):
         json_response(self, 404, {"error": "Not found"})
 
     def do_POST(self):
-        if self.path.rstrip("/") != "/RO_transaction/api/strategy-report":
+        route = self.path.rstrip("/")
+        if route == "/RO_transaction/api/classify-transactions":
+            self.handle_classify()
+            return
+        if route != "/RO_transaction/api/strategy-report":
             json_response(self, 404, {"error": "Not found"})
             return
         try:
@@ -514,7 +598,9 @@ class Handler(BaseHTTPRequestHandler):
             transaction = payload.get("transaction") or {}
             if not is_open_position_type(transaction.get("type", "")):
                 raise ValueError("Strategy report is only available for open positions.")
-            kind = security_kind(transaction.get("security", ""))
+            kind = payload.get("kind") if payload.get("kind") in {"stock", "option", "future"} else None
+            if kind is None:
+                kind = security_kind(transaction.get("security", ""))
             if kind is None:
                 raise ValueError("Strategy report is only available for stock, option, or future trades.")
             env = load_env()
@@ -537,6 +623,26 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             print(f"Unhandled error: {exc}", file=sys.stderr)
             json_response(self, 500, {"error": "Failed to generate strategy report."})
+
+    def handle_classify(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            items = payload.get("transactions")
+            if not isinstance(items, list) or not items:
+                raise ValueError("No transactions to classify.")
+            env = load_env()
+            if not env.get("GEMINI_API_KEY"):
+                raise RuntimeError("Server API keys are not configured.")
+            results = classify_transactions(items, env["GEMINI_API_KEY"])
+            json_response(self, 200, {"results": results})
+        except (ValueError, RuntimeError) as exc:
+            json_response(self, 400, {"error": str(exc)})
+        except urllib.error.HTTPError as exc:
+            json_response(self, 502, {"error": f"External API error: HTTP {exc.code}"})
+        except Exception as exc:
+            print(f"Unhandled classify error: {exc}", file=sys.stderr)
+            json_response(self, 500, {"error": "Failed to classify transactions."})
 
     def log_message(self, format: str, *args) -> None:
         print(f"{self.address_string()} - {format % args}", file=sys.stderr)

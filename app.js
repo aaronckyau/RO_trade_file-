@@ -191,6 +191,7 @@ async function parseUploadedWorkbooks(files) {
     renderStrategyTable();
     els.downloadPdfBtn.disabled = !transactions.length;
     setStatus(`已從 ${sourceFiles.length} 個檔案載入 ${transactions.length} 筆交易。產生 PDF 前可以直接修改表格內容。`);
+    classifyTransactions();
   } catch (error) {
     state.transactions = [];
     state.sourceFile = "";
@@ -441,7 +442,7 @@ function renderTable() {
 
 function renderStrategyBlankState() {
   els.strategyThead.innerHTML = "";
-  els.strategyTbody.innerHTML = `<tr><td class="blank-state" colspan="${FIELDS.length + 1}">請先上傳 Excel 檔案，以建立 strategy report 清單。</td></tr>`;
+  els.strategyTbody.innerHTML = `<tr><td class="blank-state" colspan="${FIELDS.length + 2}">請先上傳 Excel 檔案，以建立 strategy report 清單。</td></tr>`;
 }
 
 function renderStrategyTable() {
@@ -455,12 +456,39 @@ function renderStrategyTable() {
     state.strategyTypeSort
   );
 
-  els.strategyThead.innerHTML = `<tr><th>Report</th>${FIELDS.map((field) => renderHeaderCell(field, "strategy")).join("")}</tr>`;
+  els.strategyThead.innerHTML = `<tr><th>Report</th><th>型別</th>${FIELDS.map((field) => renderHeaderCell(field, "strategy")).join("")}</tr>`;
   els.strategyTbody.innerHTML = rows.map(({ transaction, index }) => {
-    return `<tr>${renderStrategyActionCell(transaction, index)}${FIELDS.map((field) => renderReadOnlyCell(transaction, field)).join("")}</tr>`;
+    return `<tr>${renderStrategyActionCell(transaction, index)}${renderKindCell(transaction, index)}${FIELDS.map((field) => renderReadOnlyCell(transaction, field)).join("")}</tr>`;
   }).join("");
   bindSortButtons(els.strategyThead);
   bindStrategyReportButtons();
+  bindKindSelects();
+}
+
+function renderKindCell(transaction, sourceIndex) {
+  const current = resolvedKind(transaction) || "";
+  const options = [
+    { value: "", label: "不支援" },
+    { value: "stock", label: "股票" },
+    { value: "option", label: "期權" },
+    { value: "future", label: "期貨" }
+  ];
+  const select = options.map((opt) =>
+    `<option value="${opt.value}"${opt.value === current ? " selected" : ""}>${opt.label}</option>`
+  ).join("");
+  return `<td><select class="kind-select" data-kind-index="${sourceIndex}">${select}</select></td>`;
+}
+
+function bindKindSelects() {
+  els.strategyTbody.querySelectorAll("[data-kind-index]").forEach((select) => {
+    select.addEventListener("change", () => {
+      const index = Number(select.dataset.kindIndex);
+      const transaction = state.transactions[index];
+      if (!transaction) return;
+      transaction.kind = select.value || "unsupported";
+      renderStrategyTable();
+    });
+  });
 }
 
 function renderHeaderCell(field, tableName) {
@@ -546,8 +574,47 @@ function securityKind(transaction) {
   return null;
 }
 
+function resolvedKind(transaction) {
+  if (["stock", "option", "future"].includes(transaction.kind)) {
+    return transaction.kind;
+  }
+  return securityKind(transaction);
+}
+
 function canGenerateStrategyReport(transaction) {
-  return isOpenPosition(transaction) && securityKind(transaction) !== null;
+  return isOpenPosition(transaction) && resolvedKind(transaction) !== null;
+}
+
+async function classifyTransactions() {
+  const items = state.transactions.map((t) => ({ security: t.security, description: t.description }));
+  if (!items.length) return;
+  setStrategyStatus("正在用 AI 判斷證券型別與標的...");
+  try {
+    const response = await fetch(getClassifyApiUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ transactions: items })
+    });
+    if (!response.ok) throw new Error("classify failed");
+    const data = await response.json();
+    (data.results || []).forEach((row) => {
+      const transaction = state.transactions[row.index];
+      if (!transaction) return;
+      transaction.kind = row.kind;
+      transaction.underlyingSymbol = row.underlyingSymbol || "";
+    });
+    renderStrategyTable();
+    setStrategyStatus("已完成型別判斷。可在「型別」欄手動修正。");
+  } catch {
+    // Keep rule-based fallback; do not block the user.
+    setStrategyStatus("AI 型別判斷未完成，改用代號規則判斷。可在「型別」欄手動修正。", true);
+  }
+}
+
+function getClassifyApiUrl() {
+  return window.location.pathname.startsWith("/RO_transaction/")
+    ? "/RO_transaction/api/classify-transactions"
+    : "/api/classify-transactions";
 }
 
 async function generateStrategyReport(index, button) {
@@ -563,7 +630,7 @@ async function generateStrategyReport(index, button) {
     const response = await fetch(getStrategyReportApiUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ transaction })
+      body: JSON.stringify({ transaction, kind: resolvedKind(transaction), underlyingSymbol: transaction.underlyingSymbol || "" })
     });
 
     if (!response.ok) {
