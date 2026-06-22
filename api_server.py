@@ -74,12 +74,17 @@ def parse_symbol(security: str) -> str:
     return re.sub(r"[^A-Za-z0-9.\-]", "", token[0]).upper()
 
 
-def is_stock_security(security: str) -> bool:
+def security_kind(security: str) -> str | None:
     text = f" {str(security or '').strip().lower()} "
-    non_stock_markers = (" future", " futures", " option", " call ", " put ", " curncy", " index", " cmdty")
-    if any(marker in text for marker in non_stock_markers):
-        return False
-    return " equity" in text
+    if " curncy" in text or " index" in text or " cmdty" in text:
+        return None
+    if " future" in text or " futures" in text:
+        return "future"
+    if " option" in text or " call " in text or " put " in text:
+        return "option"
+    if " equity" in text:
+        return "stock"
+    return None
 
 
 def is_open_position_type(value: str) -> bool:
@@ -227,7 +232,9 @@ def compute_technicals(history: list[dict], cutoff_date: str, trade_price: float
     }
 
 
-def build_facts(transaction: dict, fmp_api_key: str) -> dict:
+def build_facts(transaction: dict, fmp_api_key: str, kind: str = "stock") -> dict:
+    if kind != "stock":
+        return build_derivative_facts(transaction, fmp_api_key, kind)
     symbol = parse_symbol(transaction.get("security", ""))
     if not symbol:
         raise ValueError("Missing stock symbol.")
@@ -288,6 +295,49 @@ def build_facts(transaction: dict, fmp_api_key: str) -> dict:
             "latestNetMarginPct": round2(net_income / revenue * 100) if revenue else None,
             "priorYearSameQuarterNetIncome": prior_net_income if prior else None,
         },
+        "kind": "stock",
+        "technicalDataAvailableBeforeTradeDate": technicals,
+    }
+
+
+def build_derivative_facts(transaction: dict, fmp_api_key: str, kind: str) -> dict:
+    """Phase 1: option / future report uses pre-trade technicals only.
+
+    Company fundamentals (profile, income statement) do not apply to derivatives.
+    Underlying-stock fundamentals are added in Phase 2 once symbol parsing is verified.
+    """
+    symbol = parse_symbol(transaction.get("security", ""))
+    if not symbol:
+        raise ValueError("Missing security symbol.")
+    trade_dt = parse_trade_date(transaction.get("tradeDate", ""))
+    trade_date = trade_dt.strftime("%Y-%m-%d")
+    data_cutoff_date = (trade_dt - timedelta(days=1)).strftime("%Y-%m-%d")
+    trade_price = as_float(transaction.get("price"))
+    from_date = (trade_dt - timedelta(days=460)).strftime("%Y-%m-%d")
+    history = fmp_get("historical-price-eod/full", {"symbol": symbol, "from": from_date, "to": data_cutoff_date}, fmp_api_key)
+    if not history:
+        raise ValueError("No pre-trade market data is available for this contract.")
+    technicals = compute_technicals(history, data_cutoff_date, trade_price)
+
+    transaction_type = str(transaction.get("type", "")).strip()
+    is_buy = "buy" in transaction_type.lower()
+    price_label = "預期買入價格" if is_buy else "預期賣出價格"
+
+    return {
+        "trade": {
+            "investmentManager": "Alex Chan",
+            "company": transaction.get("description") or symbol,
+            "stockCode": transaction.get("security") or symbol,
+            "tradeDate": trade_date,
+            "dataCutoffDate": data_cutoff_date,
+            "type": transaction_type,
+            "expectedPriceText": f"{price_label}： 約 {transaction.get('ccy') or 'USD'} {round1(trade_price)}，允許價格範圍 ±0.5%",
+            "quantity": transaction.get("qty"),
+            "broker": transaction.get("counterpart"),
+        },
+        "business": {"sector": None, "industry": None, "description": None},
+        "fundamentalDataAvailableBeforeTradeDate": None,
+        "kind": kind,
         "technicalDataAvailableBeforeTradeDate": technicals,
     }
 
@@ -310,10 +360,21 @@ def generate_report(facts: dict, gemini_api_key: str) -> dict:
             "risks",
         ],
     }
+    is_derivative = facts.get("kind") in {"option", "future"}
+    if is_derivative:
+        strategy_rule = (
+            "- 此為期權／期貨交易，沒有公司基本面資料 (fundamentalDataAvailableBeforeTradeDate 為 null)。\n"
+            "- Investment Strategy 需要 3-5 段，以技術面為主：價格動能、進出場時機、波動 (ATR)、支撐阻力、成交量。\n"
+            "- 不要杜撰公司營收、毛利率或盈利資料。"
+        )
+    else:
+        strategy_rule = (
+            "- Investment Strategy 需要 4-5 段：前面基本面，後面技術面。必須基本面 + 技術面，不可全部是 fundamental。"
+        )
     prompt = f"""
 你是內部投資交易策略報告撰寫助手。請只使用 JSON 事實，不要加入未提供的新聞、price target、broker rating 或資料來源名稱。
 
-請用繁體中文生成策略報告內容，主題是 trader 為何建立 open position。必須基本面 + 技術面，不可全部是 fundamental。
+請用繁體中文生成策略報告內容，主題是 trader 為何建立 open position。
 
 硬性要求：
 - 不要提任何資料供應商名稱。
@@ -325,7 +386,7 @@ def generate_report(facts: dict, gemini_api_key: str) -> dict:
 - Details of Proposal 不要寫 Deal No。
 - 交易類型只能寫 BUY 或 SELL。
 - Details of Proposal 的價格必須使用 trade.expectedPriceText，不要用「建議」。
-- Investment Strategy 需要 4-5 段：前面基本面，後面技術面。
+{strategy_rule}
 - 基本面和技術面只能使用 trade.dataCutoffDate 或以前可取得的資料，不可使用交易日當日或之後的資料。
 - 技術面段落必須明確寫「截至交易日前可取得資料」及 technicalDataAvailableBeforeTradeDate.date，並使用 OHLC、VWAP、SMA20/50/100/200、RSI14、成交量 vs 20日均量、ATR14 的實際數字。
 - 請用 expected price 與交易日前可取得的 close / VWAP / moving averages 比較，不要聲稱使用了交易日當日價格。
@@ -453,12 +514,13 @@ class Handler(BaseHTTPRequestHandler):
             transaction = payload.get("transaction") or {}
             if not is_open_position_type(transaction.get("type", "")):
                 raise ValueError("Strategy report is only available for open positions.")
-            if not is_stock_security(transaction.get("security", "")):
-                raise ValueError("Strategy report is only available for stock trades.")
+            kind = security_kind(transaction.get("security", ""))
+            if kind is None:
+                raise ValueError("Strategy report is only available for stock, option, or future trades.")
             env = load_env()
             if not env.get("FMP_API_KEY") or not env.get("GEMINI_API_KEY"):
                 raise RuntimeError("Server API keys are not configured.")
-            facts = build_facts(transaction, env["FMP_API_KEY"])
+            facts = build_facts(transaction, env["FMP_API_KEY"], kind)
             report = generate_report(facts, env["GEMINI_API_KEY"])
             pdf = pdf_bytes(report, facts)
             filename = safe_filename(f"{facts['trade']['stockCode']}_{facts['trade']['tradeDate']}_strategy_report.pdf")

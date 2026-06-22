@@ -529,17 +529,25 @@ function isOpenPosition(transaction) {
   return ["bo", "buy open", "buy to open", "ss", "short sell", "sell open", "sell to open"].includes(type);
 }
 
-function isStockTrade(transaction) {
+function securityKind(transaction) {
   const security = ` ${cleanText(transaction.security).toLowerCase()} `;
-  const nonStockMarkers = [" future", " futures", " option", " call ", " put ", " curncy", " index", " cmdty"];
-  if (nonStockMarkers.some((marker) => security.includes(marker))) {
-    return false;
+  if (security.includes(" curncy") || security.includes(" index") || security.includes(" cmdty")) {
+    return null;
   }
-  return security.includes(" equity");
+  if (security.includes(" future") || security.includes(" futures")) {
+    return "future";
+  }
+  if (security.includes(" option") || security.includes(" call ") || security.includes(" put ")) {
+    return "option";
+  }
+  if (security.includes(" equity")) {
+    return "stock";
+  }
+  return null;
 }
 
 function canGenerateStrategyReport(transaction) {
-  return isOpenPosition(transaction) && isStockTrade(transaction);
+  return isOpenPosition(transaction) && securityKind(transaction) !== null;
 }
 
 async function generateStrategyReport(index, button) {
