@@ -398,44 +398,32 @@ def generate_report(facts: dict, gemini_api_key: str) -> dict:
             "risks",
         ],
     }
-    is_derivative = facts.get("kind") in {"option", "future"}
-    if is_derivative:
-        strategy_rule = (
-            "- 此為期權／期貨交易，沒有公司基本面資料 (fundamentalDataAvailableBeforeTradeDate 為 null)。\n"
-            "- 技術面資料是「標的」(technicalDataAvailableBeforeTradeDate.underlyingSymbolUsed) 的價格走勢，"
-            "不是合約本身；請以標的走勢說明交易判斷。\n"
-            "- Investment Strategy 需要 3-5 段，以技術面為主：標的價格動能、進出場時機、波動 (ATR)、支撐阻力、成交量。\n"
-            "- 不要杜撰公司營收、毛利率或盈利資料。"
-        )
-    else:
-        strategy_rule = (
-            "- Investment Strategy 需要 4-5 段，必須基本面 + 技術面，不可全部是 fundamental。\n"
-            "- 報告重點是「為何在 trade.expectedPriceText 的預期價格進場是合理的」，不是泛泛介紹公司。\n"
-            "- 前 1-2 段用基本面說明這個價位反映的成長/盈利/產業邏輯為何支持此進場價。\n"
-            "- 後 2-3 段用技術面具體論證價位合理性：把 expected price 與交易日前可取得的 "
-            "close、VWAP、SMA20/50/200、20日高低、52週高低、支撐阻力比較，"
-            "說明此價位相對這些參考點是否具吸引力 (例如貼近支撐、回檔至均線、未追高)。\n"
-            "- 必須明確回答：為什麼這個預期買入/賣出價格是合理的進場/出場點。"
-        )
     prompt = f"""
-你是內部投資交易策略報告撰寫助手。請只使用 JSON 事實，不要加入未提供的新聞、price target、broker rating 或資料來源名稱。
+你是這筆交易的負責 trader 本人，事後用文字向公司內部說明：當時為什麼決定在那個時間、用那個價格買入或賣出這檔股票。
+這是一份「下單理由」說明，不是 equity research 或分析報告。請用第一人稱、自然、像真人在解釋自己判斷的口吻寫繁體中文。
 
-請用繁體中文生成策略報告內容，主題是 trader 為何建立 open position。
+寫作風格（最重要）：
+- 像人說話，不要像報表。用完整、流暢的句子，段落之間要有邏輯銜接，不要條列數據。
+- 數字要融進敘述、服務於理由，不要把指標一個個列出來。例如不要寫「RSI14 為 45.2、SMA20 為 180」，
+  而要寫「當時股價剛回落到 20 日均線附近、動能轉趨溫和，我認為是相對從容的進場點」。
+- 重點始終是「為什麼是這檔、為什麼這個價、為什麼這個時間」，圍繞 trade.expectedPriceText 的價格展開。
+- 可帶一點個人判斷與取捨的語氣（我看重的是…、讓我願意進場的是…、我選擇在這個價位是因為…）。
+- 避免生硬的標題式句子和制式結論。
 
 硬性要求：
-- 不要提任何資料供應商名稱。
-- 不要加入 Valuation / Position Review。
-- 不要加入 Conclusion。
-- 不要寫投資建議報告標題。
+- 只能根據提供的 JSON 事實，不要杜撰新聞、price target、分析師評等。
+- 不要提任何資料來源或資料供應商名稱。
+- 絕對不要出現「截至…可取得資料」「資料截止日」「data cutoff」之類的字眼，也不要寫任何資料截止日期。
+- 不要寫成 Valuation / Position Review 或 Conclusion 段落，也不要加報告標題。
 - 投資經理固定寫「投資經理： Alex Chan」。
-- 日期使用交易日。
-- Details of Proposal 不要寫 Deal No。
-- 交易類型只能寫 BUY 或 SELL。
-- Details of Proposal 的價格必須使用 trade.expectedPriceText，不要用「建議」。
-{strategy_rule}
-- 基本面和技術面只能使用 trade.dataCutoffDate 或以前可取得的資料，不可使用交易日當日或之後的資料。
-- 技術面段落必須明確寫「截至交易日前可取得資料」及 technicalDataAvailableBeforeTradeDate.date，並使用 OHLC、VWAP、SMA20/50/100/200、RSI14、成交量 vs 20日均量、ATR14 的實際數字。
-- 請用 expected price 與交易日前可取得的 close / VWAP / moving averages 比較，不要聲稱使用了交易日當日價格。
+- 交易類型只說 BUY 或 SELL。
+- Details of Proposal 的價格用 trade.expectedPriceText，不要用「建議」二字。
+
+investmentStrategyParagraphs 內容：
+- 4-5 段，像一個人連貫地把買/賣這檔股票的理由講清楚。
+- 先談我看到的公司與產業面（為什麼這檔值得持有/減持），再談我為什麼覺得這個價位與時機合適
+  （把進場價和當時的近期股價走勢、均線位置、回檔或突破、量能、波動感覺自然地連起來說）。
+- 用當時（交易發生前）能掌握的資訊來說明判斷，語氣是回顧當時的決定，不要聲稱用了成交當天或之後的價格。
 
 Data JSON:
 {json.dumps(facts, ensure_ascii=False, indent=2)}
@@ -443,7 +431,7 @@ Data JSON:
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature": 0.1,
+            "temperature": 0.7,
             "maxOutputTokens": 2400,
             "responseMimeType": "application/json",
             "responseSchema": schema,
