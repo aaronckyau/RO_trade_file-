@@ -102,6 +102,7 @@ const els = {
   pageSelect: document.getElementById("pageSelect"),
   statusText: document.getElementById("statusText"),
   strategyStatusText: document.getElementById("strategyStatusText"),
+  generateAllReportsBtn: document.getElementById("generateAllReportsBtn"),
   settingsStatus: document.getElementById("settingsStatus"),
   table: document.getElementById("transactionTable"),
   thead: document.querySelector("#transactionTable thead"),
@@ -119,6 +120,7 @@ function init() {
   });
   els.excelInput.addEventListener("change", onExcelUpload);
   els.downloadPdfBtn.addEventListener("click", generatePdf);
+  els.generateAllReportsBtn.addEventListener("click", generateAllReports);
   els.mainTabButtons.forEach((button) => {
     button.addEventListener("click", () => setMainTab(button.dataset.mainTab));
   });
@@ -443,6 +445,7 @@ function renderTable() {
 function renderStrategyBlankState() {
   els.strategyThead.innerHTML = "";
   els.strategyTbody.innerHTML = `<tr><td class="blank-state" colspan="${FIELDS.length + 2}">請先上傳 Excel 檔案，以建立 strategy report 清單。</td></tr>`;
+  refreshGenerateAllButton();
 }
 
 function renderStrategyTable() {
@@ -463,6 +466,7 @@ function renderStrategyTable() {
   bindSortButtons(els.strategyThead);
   bindStrategyReportButtons();
   bindKindSelects();
+  refreshGenerateAllButton();
 }
 
 function renderKindCell(transaction, sourceIndex) {
@@ -617,6 +621,26 @@ function getClassifyApiUrl() {
     : "/api/classify-transactions";
 }
 
+async function fetchReportBlob(transaction) {
+  const response = await fetch(getStrategyReportApiUrl(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transaction, kind: resolvedKind(transaction), underlyingSymbol: transaction.underlyingSymbol || "" })
+  });
+  if (!response.ok) {
+    let message = "Strategy report generation failed.";
+    try {
+      const error = await response.json();
+      message = error.error || message;
+    } catch {
+      // Keep the generic message if the server did not return JSON.
+    }
+    throw new Error(message);
+  }
+  const blob = await response.blob();
+  return { blob, filename: getDownloadFilename(response, transaction) };
+}
+
 async function generateStrategyReport(index, button) {
   const transaction = state.transactions[index];
   if (!transaction || !canGenerateStrategyReport(transaction)) return;
@@ -627,25 +651,7 @@ async function generateStrategyReport(index, button) {
   setStrategyStatus(`正在生成 ${transaction.security} strategy report...`);
 
   try {
-    const response = await fetch(getStrategyReportApiUrl(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ transaction, kind: resolvedKind(transaction), underlyingSymbol: transaction.underlyingSymbol || "" })
-    });
-
-    if (!response.ok) {
-      let message = "Strategy report generation failed.";
-      try {
-        const error = await response.json();
-        message = error.error || message;
-      } catch {
-        // Keep the generic message if the server did not return JSON.
-      }
-      throw new Error(message);
-    }
-
-    const blob = await response.blob();
-    const filename = getDownloadFilename(response, transaction);
+    const { blob, filename } = await fetchReportBlob(transaction);
     downloadBlob(blob, filename);
     setStrategyStatus(`${transaction.security} strategy report PDF 已生成。`);
   } catch (error) {
@@ -654,6 +660,62 @@ async function generateStrategyReport(index, button) {
     button.disabled = false;
     button.textContent = originalText;
   }
+}
+
+function eligibleStrategyTransactions() {
+  return state.transactions
+    .map((transaction, index) => ({ transaction, index }))
+    .filter(({ transaction }) => canGenerateStrategyReport(transaction));
+}
+
+async function generateAllReports() {
+  const eligible = eligibleStrategyTransactions();
+  if (!eligible.length) return;
+
+  const button = els.generateAllReportsBtn;
+  button.disabled = true;
+  const originalText = button.textContent;
+  button.textContent = "生成中...";
+
+  const files = [];
+  const usedNames = new Set();
+  let failed = 0;
+  for (let i = 0; i < eligible.length; i += 1) {
+    const { transaction } = eligible[i];
+    setStrategyStatus(`正在生成第 ${i + 1} / ${eligible.length} 份報告：${transaction.security}...`);
+    try {
+      const { blob, filename } = await fetchReportBlob(transaction);
+      let name = filename;
+      let suffix = 2;
+      while (usedNames.has(name)) {
+        name = filename.replace(/\.pdf$/i, `_${suffix}.pdf`);
+        suffix += 1;
+      }
+      usedNames.add(name);
+      files.push({ name, data: new Uint8Array(await blob.arrayBuffer()) });
+    } catch {
+      failed += 1;
+    }
+  }
+
+  if (files.length) {
+    const zipBlob = createZipBlob(files);
+    const company = sanitizeFilenamePart(els.companyInput.value || "strategy");
+    downloadBlob(zipBlob, `${company}_strategy_reports.zip`);
+    const failNote = failed ? `，${failed} 份失敗` : "";
+    setStrategyStatus(`已產生 ${files.length} 份報告並打包為 ZIP${failNote}。`, failed > 0);
+  } else {
+    setStrategyStatus("沒有任何報告成功生成。", true);
+  }
+
+  button.disabled = false;
+  button.textContent = originalText;
+  refreshGenerateAllButton();
+}
+
+function refreshGenerateAllButton() {
+  if (!els.generateAllReportsBtn) return;
+  els.generateAllReportsBtn.disabled = eligibleStrategyTransactions().length === 0;
 }
 
 function getStrategyReportApiUrl() {
