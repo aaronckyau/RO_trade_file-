@@ -210,6 +210,7 @@ Key areas:
 - `drawPreTradeCompliancePage()` draws the first page of each PDF.
 - `drawPdfPage()` draws the transaction order record table pages.
 - `drawCjkCellText()` renders table cells containing Chinese as canvas images before inserting them into jsPDF. `reserveCjkCellHeight()` measures the required wrapped height with browser canvas first, so rows expand for multi-line Chinese descriptions instead of clipping or truncating.
+- `addSignatureImage()` preserves uploaded signature aspect ratio and centers the image inside the available signature box.
 - `drawPostTradeCompliancePage()` draws the last page of each PDF.
 - `createZipBlob()` creates the ZIP in-browser without adding dependencies.
 - `buildPdfFilename()` creates the daily PDF filename.

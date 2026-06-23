@@ -1413,7 +1413,15 @@ function addSignatureImage(doc, dataUrl, x, y, maxWidth, maxHeight) {
   if (!dataUrl) return;
   const format = dataUrl.includes("image/png") ? "PNG" : "JPEG";
   try {
-    doc.addImage(dataUrl, format, x, y, maxWidth, maxHeight, undefined, "FAST");
+    const props = doc.getImageProperties(dataUrl);
+    const imageWidth = Number(props.width || maxWidth);
+    const imageHeight = Number(props.height || maxHeight);
+    const scale = Math.min(maxWidth / imageWidth, maxHeight / imageHeight);
+    const drawWidth = imageWidth * scale;
+    const drawHeight = imageHeight * scale;
+    const drawX = x + (maxWidth - drawWidth) / 2;
+    const drawY = y + (maxHeight - drawHeight) / 2;
+    doc.addImage(dataUrl, format, drawX, drawY, drawWidth, drawHeight, undefined, "FAST");
   } catch {
     // Keep PDF generation usable even if the browser rejects an uncommon image type.
   }
