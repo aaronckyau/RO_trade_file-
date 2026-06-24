@@ -1373,6 +1373,11 @@ function drawSignatureBlock(doc, x, y, width) {
   const rowHeight = 38;
   const labelWidth = 76;
   const nameWidth = 190;
+  const signatureSlotX = x + labelWidth + nameWidth;
+  const signatureSlotWidth = leftWidth - labelWidth - nameWidth;
+  const signatureMaxWidth = Math.max(80, signatureSlotWidth - 24);
+  const signatureMaxHeight = rowHeight - 10;
+  const signatureX = signatureSlotX + (signatureSlotWidth - signatureMaxWidth) / 2;
 
   doc.setDrawColor(154, 164, 178);
   doc.setLineWidth(0.7);
@@ -1397,8 +1402,8 @@ function drawSignatureBlock(doc, x, y, width) {
   doc.text(els.executedNameInput.value.trim(), x + labelWidth + 4, y + 23);
   doc.text(els.roNameInput.value.trim(), x + labelWidth + 4, y + rowHeight + 23);
 
-  addSignatureImage(doc, state.executedSignature, x + labelWidth + nameWidth - 78, y + 5, 70, 28);
-  addSignatureImage(doc, state.roSignature, x + labelWidth + nameWidth - 78, y + rowHeight + 5, 70, 28);
+  addSignatureImage(doc, state.executedSignature, signatureX, y + 5, signatureMaxWidth, signatureMaxHeight);
+  addSignatureImage(doc, state.roSignature, signatureX, y + rowHeight + 5, signatureMaxWidth, signatureMaxHeight);
 
   const notes = els.notesInput.value.trim();
   if (notes) {
