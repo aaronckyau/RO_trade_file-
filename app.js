@@ -995,7 +995,7 @@ function buildPreTradePdfBytes(context) {
 
 function buildPostTradePdfBytes(context) {
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
   drawProfessionalPostTradeReport(doc, context);
   return new Uint8Array(doc.output("arraybuffer"));
 }
@@ -1143,25 +1143,70 @@ function drawProfessionalPreTradePage(doc, context) {
 }
 
 function drawProfessionalPostTradeReport(doc, context) {
-  const margin = 28;
+  const margin = 47;
   const width = doc.internal.pageSize.getWidth() - margin * 2;
-  let y = drawProfessionalTitle(doc, "Transaction Post-Trade Record", margin, 26, width);
+  const checked = state.defaultChecklistChecked;
+  let y = drawPostTradeTitle(doc, "Transaction Post-Trade Record", margin, 34, width);
 
   y = drawPdfKeyValueGrid(doc, [
     ["Fund Name:", context.company],
     ["Dealing Account:", context.company],
     ["Trade Date:", formatDisplayTradeDate(context.tradeDate)]
+  ], margin, y + 12, width, { columns: 1, rowHeight: 28 });
+
+  y = drawPostTradeCheckPanel(
+    doc,
+    ["The complete transaction record is displayed in the attached schedule."],
+    margin,
+    y + 14,
+    width,
+    checked,
+    { fill: [246, 248, 250] }
+  );
+  y = drawPostTradeSignerRow(doc, "Signed By Trader:", state.executedSignature, margin, y + 14, width);
+  y = drawPostTradeCheckPanel(
+    doc,
+    ["No executed trade in the transaction record has breached the trading instruction."],
+    margin,
+    y + 14,
+    width,
+    checked,
+    { fill: [246, 248, 250] }
+  );
+  y = drawPostTradeSignerRow(doc, "Confirmed By PM:", state.pmSignature, margin, y + 14, width);
+  y = drawPostTradeConclusionBand(doc, "Conclusion:", margin, y + 14, width);
+  y = drawPostTradeCheckPanel(doc, [
+    "No connected-party transactions were identified.",
+    "All trades were executed fairly and on the best available terms.",
+    "Any conflicts of interest have been disclosed to investors where applicable.",
+    "Executed trades are within the fund's investment scope.",
+    "No cross trades were identified."
+  ], margin, y, width, checked);
+  drawPostTradeSignerRow(doc, "Approved By RO:", state.roSignature, margin, y + 14, width);
+
+  doc.addPage("a4", "landscape");
+  drawPostTradeSchedule(doc, context);
+}
+
+function drawPostTradeSchedule(doc, context) {
+  const margin = 28;
+  const width = doc.internal.pageSize.getWidth() - margin * 2;
+  let y = drawProfessionalTitle(doc, "Transaction Schedule", margin, 26, width);
+
+  y = drawPdfKeyValueGrid(doc, [
+    ["Fund Name:", context.company],
+    ["Trade Date:", formatDisplayTradeDate(context.tradeDate)]
   ], margin, y + 10, width, { columns: 1, rowHeight: 22 });
 
-  y = drawPdfSectionBand(doc, "Transaction records are fully displayed in the attached schedule.", margin, y + 12, width);
   const body = context.rows.map(({ transaction }) => FIELDS.map((field) => transaction[field.key] ?? ""));
   doc.autoTable({
-    startY: y + 8,
+    startY: y + 14,
     head: [FIELDS.map((field) => field.pdf)],
     body,
     margin: { left: margin, right: margin },
     tableWidth: width,
     theme: "grid",
+    rowPageBreak: "avoid",
     styles: {
       font: "helvetica",
       fontSize: 7,
@@ -1182,7 +1227,7 @@ function drawProfessionalPostTradeReport(doc, context) {
       1: { cellWidth: 50 },
       2: { cellWidth: 56 },
       3: { cellWidth: 82 },
-      4: { cellWidth: 116 },
+      4: { cellWidth: 105.89 },
       5: { cellWidth: 44, halign: "right" },
       6: { cellWidth: 58, halign: "right" },
       7: { cellWidth: 28 },
@@ -1210,20 +1255,69 @@ function drawProfessionalPostTradeReport(doc, context) {
       }
     }
   });
+}
 
-  y = Math.min((doc.lastAutoTable?.finalY || 320) + 18, doc.internal.pageSize.getHeight() - 128);
-  y = drawPdfSignerRow(doc, "Signed By Trader:", els.executedNameInput.value.trim(), state.executedSignature, margin, y, width);
-  y = drawPdfStatementBox(doc, "No executed trade in the transaction record has breached the trading instruction.", margin, y + 8, width);
-  y = drawPdfSignerRow(doc, "Confirmed By PM:", els.pmNameInput.value.trim(), state.pmSignature, margin, y + 10, width);
-  y = drawPdfSectionBand(doc, "Conclusion:", margin, y + 10, width);
-  y = drawPdfBullets(doc, [
-    "No connected-party transactions were identified.",
-    "All trades were executed fairly and on the best available terms.",
-    "Any conflicts of interest have been disclosed to investors where applicable.",
-    "Executed trades are within the fund's investment scope.",
-    "No cross trades were identified."
-  ], margin, y + 8, width);
-  drawPdfSignerRow(doc, "Approved By RO:", els.roNameInput.value.trim(), state.roSignature, margin, y + 10, width);
+function drawPostTradeTitle(doc, title, x, y, width) {
+  doc.setFillColor(33, 61, 86);
+  doc.rect(x, y, width, 40, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(19.5);
+  doc.text(title, x + 10, y + 26);
+  doc.setTextColor(39, 55, 70);
+  return y + 40;
+}
+
+function drawPostTradeConclusionBand(doc, text, x, y, width) {
+  doc.setFillColor(33, 61, 86);
+  doc.rect(x, y, width, 28, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11.5);
+  doc.text(text, x + 8, y + 18.5);
+  doc.setTextColor(39, 55, 70);
+  return y + 28;
+}
+
+function drawPostTradeCheckPanel(doc, items, x, y, width, checked, options = {}) {
+  const paddingX = 12;
+  const paddingY = 13;
+  const itemHeights = items.map((item) => {
+    const lines = doc.splitTextToSize(item, width - paddingX * 2 - 20);
+    return Math.max(19, lines.length * 13);
+  });
+  const height = paddingY * 2 + itemHeights.reduce((sum, itemHeight) => sum + itemHeight, 0);
+  const fill = options.fill || [255, 255, 255];
+
+  doc.setFillColor(...fill);
+  doc.setDrawColor(184, 199, 211);
+  doc.rect(x, y, width, height, "FD");
+  let itemY = y + paddingY + 7;
+  items.forEach((item, index) => {
+    drawCheckItem(doc, item, x + paddingX, itemY, width - paddingX * 2, { checked });
+    itemY += itemHeights[index];
+  });
+  return y + height;
+}
+
+function drawPostTradeSignerRow(doc, label, signature, x, y, width) {
+  const rowHeight = 58;
+  const labelWidth = width * 0.495;
+  doc.setFillColor(241, 245, 248);
+  doc.rect(x, y, labelWidth, rowHeight, "F");
+  doc.setDrawColor(184, 199, 211);
+  doc.rect(x, y, width, rowHeight);
+  doc.line(x + labelWidth, y, x + labelWidth, y + rowHeight);
+  doc.setDrawColor(11, 108, 149);
+  doc.setLineWidth(1.5);
+  doc.line(x + labelWidth, y + rowHeight, x + width, y + rowHeight);
+  doc.setLineWidth(0.2);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10.5);
+  doc.setTextColor(39, 55, 70);
+  doc.text(label, x + 8, y + rowHeight / 2 + 3.5);
+  addSignatureImage(doc, signature, x + labelWidth + 12, y + 7, width - labelWidth - 24, rowHeight - 14);
+  return y + rowHeight;
 }
 
 function drawProfessionalTitle(doc, title, x, y, width) {
@@ -1250,25 +1344,48 @@ function drawPdfSectionBand(doc, text, x, y, width) {
 
 function drawPdfKeyValueGrid(doc, rows, x, y, width, options = {}) {
   const columns = options.columns || 1;
-  const rowHeight = options.rowHeight || 28;
+  const minimumRowHeight = options.rowHeight || 28;
   const labelWidth = columns === 2 ? 130 : 150;
   const colWidth = width / columns;
+  const horizontalPadding = 6;
+  const verticalPadding = 7;
+  const lineHeight = 11.5;
+  let currentY = y;
   doc.setFontSize(9.5);
-  rows.forEach((row, index) => {
-    const rowIndex = Math.floor(index / columns);
-    const colIndex = index % columns;
-    const cellX = x + colIndex * colWidth;
-    const cellY = y + rowIndex * rowHeight;
-    doc.setDrawColor(154, 164, 178);
-    doc.rect(cellX, cellY, colWidth, rowHeight);
-    doc.setFillColor(243, 244, 246);
-    doc.rect(cellX, cellY, labelWidth, rowHeight, "F");
-    doc.setFont("helvetica", "bold");
-    doc.text(row[0], cellX + 6, cellY + 18);
-    doc.setFont("helvetica", "normal");
-    doc.text(fitPdfText(doc, row[1] || "", colWidth - labelWidth - 12), cellX + labelWidth + 6, cellY + 18);
-  });
-  return y + Math.ceil(rows.length / columns) * rowHeight;
+
+  for (let rowStart = 0; rowStart < rows.length; rowStart += columns) {
+    const visualRow = rows.slice(rowStart, rowStart + columns).map((row) => {
+      doc.setFont("helvetica", "bold");
+      const labelLines = doc.splitTextToSize(String(row[0] || ""), labelWidth - horizontalPadding * 2);
+      doc.setFont("helvetica", "normal");
+      const valueLines = doc.splitTextToSize(
+        String(row[1] || ""),
+        colWidth - labelWidth - horizontalPadding * 2
+      );
+      return { labelLines, valueLines };
+    });
+    const contentLines = Math.max(
+      1,
+      ...visualRow.flatMap(({ labelLines, valueLines }) => [labelLines.length, valueLines.length])
+    );
+    const rowHeight = Math.max(minimumRowHeight, contentLines * lineHeight + verticalPadding * 2);
+
+    visualRow.forEach(({ labelLines, valueLines }, colIndex) => {
+      const cellX = x + colIndex * colWidth;
+      doc.setFillColor(243, 244, 246);
+      doc.rect(cellX, currentY, labelWidth, rowHeight, "F");
+      doc.setDrawColor(154, 164, 178);
+      doc.rect(cellX, currentY, colWidth, rowHeight);
+      doc.line(cellX + labelWidth, currentY, cellX + labelWidth, currentY + rowHeight);
+      doc.setFont("helvetica", "bold");
+      doc.text(labelLines, cellX + horizontalPadding, currentY + verticalPadding + 9.5);
+      doc.setFont("helvetica", "normal");
+      doc.text(valueLines, cellX + labelWidth + horizontalPadding, currentY + verticalPadding + 9.5);
+    });
+    currentY += rowHeight;
+  }
+
+  return currentY;
 }
 
 function drawPdfReasonBox(doc, reason, x, y, width) {
@@ -1387,7 +1504,7 @@ function buildPreTradeDocxBytes(context) {
 
 function buildPostTradeDocxBytes(context) {
   const docx = { images: [] };
-  const rows = [
+  const scheduleRows = [
     FIELDS.map((field) => ({ text: field.pdf, fill: "1F2937", color: "FFFFFF", bold: true, align: "center", size: 14 })),
     ...context.rows.map(({ transaction }) => FIELDS.map((field) => ({
       text: transaction[field.key] ?? "",
@@ -1396,28 +1513,52 @@ function buildPostTradeDocxBytes(context) {
       color: field.numeric && isNegative(transaction[field.key]) ? "DC2626" : "111827"
     })))
   ];
-  const body = [
-    docxTitle("Transaction Post-Trade Record"),
-    docxKeyValueTable([
+  const checked = state.defaultChecklistChecked;
+  const form = [
+    docxPostTradeTitle("Transaction Post-Trade Record"),
+    docxTemplateSpacer(),
+    docxPostTradeKeyValueTable([
       ["Fund Name:", context.company],
       ["Dealing Account:", context.company],
       ["Trade Date:", formatDisplayTradeDate(context.tradeDate)]
-    ], 15398),
-    docxSectionBand("Transaction records are fully displayed in the attached schedule."),
-    docxTable(rows, [900, 900, 1050, 1500, 2600, 900, 1100, 650, 1300, 800, 1100, 1700, 898]),
-    docxSignerTable("Signed By Trader:", els.executedNameInput.value.trim(), state.executedSignature, docx, 15398),
-    docxTable([["No executed trade in the transaction record has breached the trading instruction."]], [15398]),
-    docxSignerTable("Confirmed By PM:", els.pmNameInput.value.trim(), state.pmSignature, docx, 15398),
-    docxSectionBand("Conclusion:"),
-    docxBulletList([
+    ]),
+    docxTemplateSpacer(),
+    docxPostTradeCheckPanel([
+      "The complete transaction record is displayed in the attached schedule."
+    ], checked, { fill: "F6F8FA" }),
+    docxTemplateSpacer(),
+    docxPostTradeSignerTable("Signed By Trader:", state.executedSignature, docx),
+    docxTemplateSpacer(),
+    docxPostTradeCheckPanel([
+      "No executed trade in the transaction record has breached the trading instruction."
+    ], checked, { fill: "F6F8FA" }),
+    docxTemplateSpacer(),
+    docxPostTradeSignerTable("Confirmed By PM:", state.pmSignature, docx),
+    docxTemplateSpacer(),
+    docxPostTradeConclusionBand("Conclusion:"),
+    docxPostTradeCheckPanel([
       "No connected-party transactions were identified.",
       "All trades were executed fairly and on the best available terms.",
       "Any conflicts of interest have been disclosed to investors where applicable.",
       "Executed trades are within the fund's investment scope.",
       "No cross trades were identified."
-    ]),
-    docxSignerTable("Approved By RO:", els.roNameInput.value.trim(), state.roSignature, docx, 15398)
+    ], checked),
+    docxTemplateSpacer(),
+    docxPostTradeSignerTable("Approved By RO:", state.roSignature, docx)
   ].join("");
+  const schedule = [
+    docxTitle("Transaction Schedule"),
+    docxKeyValueTable([
+      ["Fund Name:", context.company],
+      ["Trade Date:", formatDisplayTradeDate(context.tradeDate)]
+    ], 15398),
+    docxTable(
+      scheduleRows,
+      [900, 900, 1050, 1500, 2600, 900, 1100, 650, 1300, 800, 1100, 1700, 898],
+      { repeatHeader: true, cantSplitRows: true }
+    )
+  ].join("");
+  const body = `${form}${docxSectionBreak({ landscape: false, templateMargins: true, type: "nextPage" })}${schedule}`;
 
   return createDocxPackage(docxDocumentXml(body, { landscape: true }), docx.images);
 }
@@ -1431,11 +1572,66 @@ function docxSectionProperties(options = {}) {
   const landscape = Boolean(options.landscape);
   const width = landscape ? 16838 : 11906;
   const height = landscape ? 11906 : 16838;
-  return `<w:sectPr><w:pgSz w:w="${width}" w:h="${height}"${landscape ? ' w:orient="landscape"' : ""}/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr>`;
+  const margin = options.templateMargins
+    ? { top: 749, right: 936, bottom: 749, left: 936 }
+    : { top: 720, right: 720, bottom: 720, left: 720 };
+  const type = options.type ? `<w:type w:val="${options.type}"/>` : "";
+  return `<w:sectPr>${type}<w:pgSz w:w="${width}" w:h="${height}"${landscape ? ' w:orient="landscape"' : ""}/><w:pgMar w:top="${margin.top}" w:right="${margin.right}" w:bottom="${margin.bottom}" w:left="${margin.left}" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr>`;
+}
+
+function docxSectionBreak(options = {}) {
+  return `<w:p><w:pPr>${docxSectionProperties(options)}</w:pPr></w:p>`;
 }
 
 function docxTitle(text) {
   return docxParagraph(text, { align: "center", bold: true, size: 32, color: "FFFFFF", fill: "1F2937", after: 180 });
+}
+
+function docxPostTradeTitle(text) {
+  return docxTable([[
+    { text, align: "left", bold: true, size: 39, color: "FFFFFF", fill: "213D56" }
+  ]], [10036]);
+}
+
+function docxTemplateSpacer(height = 100) {
+  return `<w:p><w:pPr><w:spacing w:line="${height}" w:lineRule="exact" w:after="0"/></w:pPr></w:p>`;
+}
+
+function docxPostTradeKeyValueTable(rows) {
+  return docxTable(rows.map(([label, value]) => [
+    { text: label, fill: "F1F5F8", color: "273746", bold: true, size: 21 },
+    { text: value || "", color: "273746", size: 21 }
+  ]), [2951, 7085]);
+}
+
+function docxPostTradeCheckPanel(items, checked, options = {}) {
+  const content = items.map((item) => docxCheckboxParagraph(item, checked)).join("");
+  return docxTable([[
+    { raw: content, fill: options.fill || "FFFFFF" }
+  ]], [10036]);
+}
+
+function docxCheckboxParagraph(text, checked) {
+  const symbol = checked ? "00FE" : "00A8";
+  const symbolRun = `<w:r><w:rPr><w:rFonts w:ascii="Wingdings" w:hAnsi="Wingdings"/><w:sz w:val="23"/></w:rPr><w:sym w:font="Wingdings" w:char="${symbol}"/></w:r>`;
+  const textRun = `<w:r>${docxRunProperties({ size: 21, color: "273746" })}<w:t xml:space="preserve">  ${xmlEscape(text)}</w:t></w:r>`;
+  return `<w:p><w:pPr><w:spacing w:after="70" w:line="260" w:lineRule="atLeast"/></w:pPr>${symbolRun}${textRun}</w:p>`;
+}
+
+function docxPostTradeConclusionBand(text) {
+  return docxTable([[
+    { text, align: "left", bold: true, size: 23, color: "FFFFFF", fill: "213D56" }
+  ]], [10036]);
+}
+
+function docxPostTradeSignerTable(label, signature, context) {
+  return docxTable([[
+    { text: label, fill: "F1F5F8", color: "273746", bold: true, size: 21 },
+    {
+      raw: docxImageParagraph(signature, context),
+      bottomBorder: { color: "0B6C95", size: 18 }
+    }
+  ]], [4968, 5068]);
 }
 
 function docxSectionBand(text) {
@@ -1468,17 +1664,26 @@ function docxPageBreak() {
   return '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
 }
 
-function docxTable(rows, widths) {
+function docxTable(rows, widths, options = {}) {
   const grid = widths.map((width) => `<w:gridCol w:w="${width}"/>`).join("");
-  const body = rows.map((row) => `<w:tr>${row.map((cell, index) => docxCell(cell, widths[index] || widths[0])).join("")}</w:tr>`).join("");
+  const body = rows.map((row, rowIndex) => {
+    const rowProperties = [
+      rowIndex === 0 && options.repeatHeader ? '<w:tblHeader w:val="true"/>' : "",
+      options.cantSplitRows ? "<w:cantSplit/>" : ""
+    ].join("");
+    return `<w:tr>${rowProperties ? `<w:trPr>${rowProperties}</w:trPr>` : ""}${row.map((cell, index) => docxCell(cell, widths[index] || widths[0])).join("")}</w:tr>`;
+  }).join("");
   return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="6" w:color="9AA4B2"/><w:left w:val="single" w:sz="6" w:color="9AA4B2"/><w:bottom w:val="single" w:sz="6" w:color="9AA4B2"/><w:right w:val="single" w:sz="6" w:color="9AA4B2"/><w:insideH w:val="single" w:sz="6" w:color="9AA4B2"/><w:insideV w:val="single" w:sz="6" w:color="9AA4B2"/></w:tblBorders><w:tblCellMar><w:top w:w="90" w:type="dxa"/><w:left w:w="90" w:type="dxa"/><w:bottom w:w="90" w:type="dxa"/><w:right w:w="90" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>${grid}</w:tblGrid>${body}</w:tbl>`;
 }
 
 function docxCell(cell, width) {
   const data = typeof cell === "object" && cell !== null ? cell : { text: cell };
   const fill = data.fill ? `<w:shd w:fill="${data.fill}"/>` : "";
+  const bottomBorder = data.bottomBorder
+    ? `<w:tcBorders><w:bottom w:val="single" w:sz="${data.bottomBorder.size || 6}" w:color="${data.bottomBorder.color || "9AA4B2"}"/></w:tcBorders>`
+    : "";
   const content = data.raw !== undefined ? (data.raw || docxParagraph("")) : docxParagraph(data.text || "", data);
-  return `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/><w:vAlign w:val="center"/>${fill}</w:tcPr>${content}</w:tc>`;
+  return `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/><w:vAlign w:val="center"/>${fill}${bottomBorder}</w:tcPr>${content}</w:tc>`;
 }
 
 function docxParagraph(text, options = {}) {

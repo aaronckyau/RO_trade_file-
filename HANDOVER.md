@@ -16,6 +16,9 @@ Current production behavior:
   - `Word ZIP`: one folder per trade date, containing one `Pre_{Deal No.}.docx` per transaction and one daily post-trade `.docx`.
 - Pre-trade output has one separate file per transaction. Duplicate deal numbers receive `_2`, `_3`, and subsequent suffixes.
 - Post-trade output has one report per trade date with the full daily transaction schedule.
+- PDF key/value fields and post-trade schedule cells wrap to show full content without ellipsis; rows expand automatically and are kept together across schedule pages where possible.
+- Post-trade PDF and Word output follows the supplied professional template: a portrait sign-off form is the first page, followed by the complete daily transaction schedule on landscape attachment pages.
+- The post-trade form contains seven checkboxes (two confirmations and five conclusion checks). All seven follow the Settings default-checklist option, which is enabled by default.
 - Every transaction row in the Transaction tab has individual `Pre PDF` and `Pre Word` download buttons, including opening and closing trades.
 - The transaction-date toolbar has individual `Post PDF` and `Post Word` buttons for the selected trade date. If a date spans multiple preview pages, the post-trade report still includes the complete daily group.
 - All report text in the generated pre/post templates is English.
@@ -47,13 +50,13 @@ Post-trade report:
 - Fund Name
 - Dealing Account
 - Trade Date
-- Statement that transaction records are fully displayed in the attached schedule
-- Daily transaction table
+- Checked statement that transaction records are fully displayed in the attached schedule
 - Signed By Trader
-- Statement that no executed trade breached the trading instruction
+- Checked statement that no executed trade breached the trading instruction
 - Confirmed By PM
-- Conclusion checklist
+- Five-item checked Conclusion checklist
 - Approved By RO
+- Complete daily transaction table on landscape attachment pages
 
 ## Important Instruction For New Sessions
 
