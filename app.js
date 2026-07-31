@@ -87,6 +87,7 @@ const els = {
   transactionPanel: document.getElementById("transactionPanel"),
   strategyPanel: document.getElementById("strategyPanel"),
   companyInput: document.getElementById("companyInput"),
+  dealingAccountInput: document.getElementById("dealingAccountInput"),
   pmNameInput: document.getElementById("pmNameInput"),
   pmSigInput: document.getElementById("pmSigInput"),
   pmSigPreview: document.getElementById("pmSigPreview"),
@@ -204,6 +205,7 @@ async function parseUploadedWorkbooks(files) {
     state.page = 1;
     if (companyNames.length === 1) {
       els.companyInput.value = companyNames[0];
+      els.dealingAccountInput.value = companyNames[0];
     }
     updateSummary();
     renderPager();
@@ -881,7 +883,8 @@ async function generateCurrentPostTradeReport(format, button) {
 
   try {
     const company = getConfiguredFundName();
-    const context = { company, tradeDate: group.tradeDate, rows: group.rows };
+    const dealingAccount = getConfiguredDealingAccount();
+    const context = { company, dealingAccount, tradeDate: group.tradeDate, rows: group.rows };
     const filename = buildDailyReportFilename(company, group.tradeDate, "Post-Trade", format);
     if (format === "pdf") {
       downloadBlob(
@@ -958,6 +961,7 @@ async function generateWord() {
 function buildDailyPdfReportFiles() {
   const transactionGroups = getTransactionGroups();
   const company = getConfiguredFundName();
+  const dealingAccount = getConfiguredDealingAccount();
   const files = [];
   const usedPaths = new Set();
 
@@ -979,7 +983,7 @@ function buildDailyPdfReportFiles() {
         `${folder}/${buildDailyReportFilename(company, group.tradeDate, "Post-Trade", "pdf")}`,
         usedPaths
       ),
-      data: buildPostTradePdfBytes({ company, tradeDate: group.tradeDate, rows: group.rows })
+      data: buildPostTradePdfBytes({ company, dealingAccount, tradeDate: group.tradeDate, rows: group.rows })
     });
   });
 
@@ -1042,6 +1046,10 @@ function buildUniqueZipPath(path, usedPaths) {
 
 function getConfiguredFundName() {
   return els.companyInput.value.trim() || "Transaction Order";
+}
+
+function getConfiguredDealingAccount() {
+  return els.dealingAccountInput.value.trim() || getConfiguredFundName();
 }
 
 async function ensurePreTradeReasons() {
@@ -1150,7 +1158,7 @@ function drawProfessionalPostTradeReport(doc, context) {
 
   y = drawPdfKeyValueGrid(doc, [
     ["Fund Name:", context.company],
-    ["Dealing Account:", context.company],
+    ["Dealing Account:", context.dealingAccount || context.company],
     ["Trade Date:", formatDisplayTradeDate(context.tradeDate)]
   ], margin, y + 12, width, { columns: 1, rowHeight: 28 });
 
@@ -1446,6 +1454,7 @@ function drawPdfBullets(doc, items, x, y, width) {
 
 function buildDailyWordReportFiles() {
   const company = getConfiguredFundName();
+  const dealingAccount = getConfiguredDealingAccount();
   const files = [];
   const usedPaths = new Set();
 
@@ -1469,7 +1478,7 @@ function buildDailyWordReportFiles() {
         `${folder}/${buildDailyReportFilename(company, group.tradeDate, "Post-Trade", "docx")}`,
         usedPaths
       ),
-      data: buildPostTradeDocxBytes({ company, tradeDate: group.tradeDate, rows: group.rows })
+      data: buildPostTradeDocxBytes({ company, dealingAccount, tradeDate: group.tradeDate, rows: group.rows })
     });
   });
 
@@ -1519,7 +1528,7 @@ function buildPostTradeDocxBytes(context) {
     docxTemplateSpacer(),
     docxPostTradeKeyValueTable([
       ["Fund Name:", context.company],
-      ["Dealing Account:", context.company],
+      ["Dealing Account:", context.dealingAccount || context.company],
       ["Trade Date:", formatDisplayTradeDate(context.tradeDate)]
     ]),
     docxTemplateSpacer(),

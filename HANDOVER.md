@@ -19,6 +19,7 @@ Current production behavior:
 - PDF key/value fields and post-trade schedule cells wrap to show full content without ellipsis; rows expand automatically and are kept together across schedule pages where possible.
 - Post-trade PDF and Word output follows the supplied professional template: a portrait sign-off form is the first page, followed by the complete daily transaction schedule on landscape attachment pages.
 - The post-trade form contains seven checkboxes (two confirmations and five conclusion checks). All seven follow the Settings default-checklist option, which is enabled by default.
+- Settings provides separate `Fund Name` and `Dealing Account` fields. Both initially use the entity inferred from the uploaded filename, can be amended independently, and appear separately in Post-Trade PDF/Word output; a blank Dealing Account falls back to Fund Name.
 - Every transaction row in the Transaction tab has individual `Pre PDF` and `Pre Word` download buttons, including opening and closing trades.
 - The transaction-date toolbar has individual `Post PDF` and `Post Word` buttons for the selected trade date. If a date spans multiple preview pages, the post-trade report still includes the complete daily group.
 - All report text in the generated pre/post templates is English.
