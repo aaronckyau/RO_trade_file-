@@ -156,8 +156,9 @@
           </div>
 
           <div class="control-block notes-block">
-            <label for="notesInput">備註</label>
-            <textarea id="notesInput" rows="6" placeholder="可選填簽署表格備註"></textarea>
+            <label for="notesInput">Post-Trade RO Comments</label>
+            <textarea id="notesInput" rows="4" placeholder="Optional text shown in the RO Comments field"></textarea>
+            <p class="helper-text">The PDF field remains editable after export. Word output can be edited normally.</p>
           </div>
         </section>
 
@@ -171,6 +172,6 @@
     <script src="vendor/xlsx.full.min.js"></script>
     <script src="vendor/jspdf.umd.min.js"></script>
     <script src="vendor/jspdf.plugin.autotable.min.js"></script>
-    <script src="app.js?v=20260731-separate-dealing-account"></script>
+    <script src="app.js?v=20260731-posttrade-ro-comments"></script>
   </body>
 </html>

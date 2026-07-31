@@ -1059,6 +1059,10 @@ async function ensurePreTradeReasons() {
 }
 
 async function ensurePreTradeReasonsFor(candidates) {
+  candidates.forEach(({ transaction }) => {
+    const closeReason = buildClosePositionReason(transaction);
+    if (closeReason) transaction.reason = closeReason;
+  });
   const missing = candidates.filter(({ transaction }) => !cleanText(transaction.reason));
   if (!missing.length) return;
 
@@ -1076,8 +1080,8 @@ async function ensurePreTradeReasonsFor(candidates) {
             type: transaction.type,
             security: transaction.security,
             description: transaction.description,
-            qty: transaction.qty,
-            price: transaction.price,
+            qty: formatReportQuantity(transaction.qty),
+            proposedPriceRange: formatProposedPriceRange(transaction.price, transaction.ccy),
             ccy: transaction.ccy,
             gross: transaction.gross,
             counterpart: transaction.counterpart,
@@ -1090,7 +1094,7 @@ async function ensurePreTradeReasonsFor(candidates) {
       (data.results || []).forEach((row) => {
         const transaction = state.transactions[row.index];
         if (transaction && row.reason) {
-          transaction.reason = cleanText(row.reason);
+          transaction.reason = normalizeFinancialReasonTerms(row.reason);
         }
       });
     }
@@ -1109,11 +1113,88 @@ function getPreTradeReasonsApiUrl() {
 }
 
 function fallbackPreTradeReason(transaction) {
+  const closeReason = buildClosePositionReason(transaction);
+  if (closeReason) return closeReason;
+
   const action = normalizeReportTradeType(transaction.type);
   const security = transaction.security || "the security";
-  const price = formatMoney(transaction.price, transaction.ccy);
-  const quantity = transaction.qty || "the proposed quantity";
-  return `The proposed ${action} transaction in ${security} is recorded for pre-trade review based on the submitted order details, including proposed price ${price} and quantity ${quantity}. The portfolio manager should confirm that the transaction is consistent with the fund mandate, investment restrictions, and execution requirements before the order is released.`;
+  const priceRange = formatProposedPriceRange(transaction.price, transaction.ccy);
+  const quantity = formatReportQuantity(transaction.qty) || "the proposed quantity";
+  return `The proposed ${action} transaction in ${security} is recorded for pre-trade review based on the submitted order details, including proposed price range ${priceRange} and quantity ${quantity}. The portfolio manager should confirm that the transaction is consistent with the fund mandate, investment restrictions, and execution requirements before the order is released.`;
+}
+
+function buildClosePositionReason(transaction) {
+  if (!isClosePositionTrade(transaction?.type)) return "";
+
+  const action = normalizeReportTradeType(transaction.type);
+  const security = transaction.security || "the security";
+  const realisedProfit = parseSignedReportNumber(transaction.realised);
+  const reportQuantity = formatReportQuantity(transaction.qty);
+  const quantity = reportQuantity ? `${reportQuantity} units` : "the submitted quantity";
+  const priceRange = formatProposedPriceRange(transaction.price, transaction.ccy);
+
+  if (realisedProfit !== null && realisedProfit > 0) {
+    const amount = formatAbsoluteMoney(realisedProfit, transaction.ccy);
+    return `The proposed ${action} transaction closes the existing position in ${security} as a take-profit exit. The recorded realised profit is ${amount}, indicating that the trade crystallises gains while reducing the fund's exposure. The order covers ${quantity} within the proposed price range ${priceRange} and should be checked against the intended exit level, available liquidity, and best-execution requirements before release.`;
+  }
+
+  if (realisedProfit !== null && realisedProfit < 0) {
+    const amount = formatAbsoluteMoney(realisedProfit, transaction.ccy);
+    return `The proposed ${action} transaction closes the existing position in ${security} as a stop-loss exit. The recorded realised loss is ${amount}, indicating that the trade is intended to limit further downside and reduce risk exposure. The order covers ${quantity} within the proposed price range ${priceRange} and should be checked against the approved risk limits, available liquidity, and best-execution requirements before release.`;
+  }
+
+  return `The proposed ${action} transaction closes the existing position in ${security} to exit or reduce the current exposure. No positive or negative realised profit is recorded in the submitted trade data, so the exit should be assessed against the portfolio manager's stated rationale. The order covers ${quantity} within the proposed price range ${priceRange} and should be checked for mandate compliance, available liquidity, and best execution before release.`;
+}
+
+function isClosePositionTrade(type) {
+  const normalized = cleanText(type).toUpperCase().replace(/[_-]+/g, " ");
+  return normalized.includes("CLOSE") || normalized === "SH" || normalized === "BC";
+}
+
+function parseSignedReportNumber(value) {
+  const text = cleanText(value).replace(/,/g, "");
+  if (!text) return null;
+  const isParenthesized = /^\(.*\)$/.test(text);
+  const number = Number(text.replace(/[()]/g, ""));
+  if (!Number.isFinite(number)) return null;
+  return isParenthesized ? -Math.abs(number) : number;
+}
+
+function formatAbsoluteMoney(value, ccy) {
+  const currency = cleanText(ccy) || "USD";
+  return `${currency} ${Math.abs(value).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })}`;
+}
+
+function formatReportQuantity(value) {
+  const number = parseSignedReportNumber(value);
+  if (number === null) return cleanText(value).replace(/^-/, "");
+  return trimNumber(Math.abs(number));
+}
+
+function formatProposedPriceRange(price, ccy) {
+  const currency = cleanText(ccy) || "USD";
+  const number = parseSignedReportNumber(price);
+  if (number === null) return `${currency} price not provided`;
+  const basePrice = Math.abs(number);
+  return `${currency} ${(basePrice * 0.99).toFixed(2)} to ${(basePrice * 1.01).toFixed(2)} (-1% to +1%)`;
+}
+
+function normalizeFinancialReasonTerms(reason) {
+  return cleanText(reason)
+    .replace(/\bproposed\s+sale\s+of\b/gi, "proposed SELL transaction in")
+    .replace(/\bsale\s+transaction\b/gi, "SELL transaction")
+    .replace(/\bthe\s+sale\b/gi, "the SELL transaction")
+    .replace(/\ba\s+sale\b/gi, "a SELL transaction")
+    .replace(/\bsale\b/gi, "SELL");
+}
+
+function getPreTradeReason(transaction) {
+  return normalizeFinancialReasonTerms(
+    buildClosePositionReason(transaction) || transaction.reason || fallbackPreTradeReason(transaction)
+  );
 }
 
 function drawProfessionalPreTradePage(doc, context) {
@@ -1132,12 +1213,12 @@ function drawProfessionalPreTradePage(doc, context) {
   y = drawPdfSectionBand(doc, "Details", margin, y + 14, width);
   y = drawPdfKeyValueGrid(doc, [
     ["Type of Transaction:", normalizeReportTradeType(transaction.type)],
-    ["Proposed Price:", formatMoney(transaction.price, transaction.ccy)],
-    ["Proposed Quantity:", transaction.qty || ""]
+    ["Proposed Price:", formatProposedPriceRange(transaction.price, transaction.ccy)],
+    ["Proposed Quantity:", formatReportQuantity(transaction.qty)]
   ], margin, y, width, { columns: 1 });
 
   y = drawPdfSectionBand(doc, "Investment Supporting", margin, y + 14, width);
-  y = drawPdfReasonBox(doc, transaction.reason || fallbackPreTradeReason(transaction), margin, y, width);
+  y = drawPdfReasonBox(doc, getPreTradeReason(transaction), margin, y, width);
 
   y = drawPdfSignerRow(doc, "Signed By PM:", els.pmNameInput.value.trim(), state.pmSignature, margin, y + 16, width);
   y = drawPdfStatementBox(
@@ -1164,7 +1245,7 @@ function drawProfessionalPostTradeReport(doc, context) {
 
   y = drawPostTradeCheckPanel(
     doc,
-    ["The complete transaction record is displayed in the attached schedule."],
+    ["The complete daily transaction record has been reviewed."],
     margin,
     y + 14,
     width,
@@ -1190,79 +1271,8 @@ function drawProfessionalPostTradeReport(doc, context) {
     "Executed trades are within the fund's investment scope.",
     "No cross trades were identified."
   ], margin, y, width, checked);
+  y = drawPostTradeCommentsField(doc, els.notesInput.value.trim(), margin, y + 14, width);
   drawPostTradeSignerRow(doc, "Approved By RO:", state.roSignature, margin, y + 14, width);
-
-  doc.addPage("a4", "landscape");
-  drawPostTradeSchedule(doc, context);
-}
-
-function drawPostTradeSchedule(doc, context) {
-  const margin = 28;
-  const width = doc.internal.pageSize.getWidth() - margin * 2;
-  let y = drawProfessionalTitle(doc, "Transaction Schedule", margin, 26, width);
-
-  y = drawPdfKeyValueGrid(doc, [
-    ["Fund Name:", context.company],
-    ["Trade Date:", formatDisplayTradeDate(context.tradeDate)]
-  ], margin, y + 10, width, { columns: 1, rowHeight: 22 });
-
-  const body = context.rows.map(({ transaction }) => FIELDS.map((field) => transaction[field.key] ?? ""));
-  doc.autoTable({
-    startY: y + 14,
-    head: [FIELDS.map((field) => field.pdf)],
-    body,
-    margin: { left: margin, right: margin },
-    tableWidth: width,
-    theme: "grid",
-    rowPageBreak: "avoid",
-    styles: {
-      font: "helvetica",
-      fontSize: 7,
-      cellPadding: 2.4,
-      lineColor: [207, 213, 221],
-      lineWidth: 0.5,
-      overflow: "linebreak",
-      valign: "middle"
-    },
-    headStyles: {
-      fillColor: [31, 41, 55],
-      textColor: [255, 255, 255],
-      fontStyle: "bold",
-      halign: "center"
-    },
-    columnStyles: {
-      0: { cellWidth: 50 },
-      1: { cellWidth: 50 },
-      2: { cellWidth: 56 },
-      3: { cellWidth: 82 },
-      4: { cellWidth: 105.89 },
-      5: { cellWidth: 44, halign: "right" },
-      6: { cellWidth: 58, halign: "right" },
-      7: { cellWidth: 28 },
-      8: { cellWidth: 66, halign: "right" },
-      9: { cellWidth: 42, halign: "right" },
-      10: { cellWidth: 56, halign: "right" },
-      11: { cellWidth: 88 },
-      12: { cellWidth: 60, halign: "right" }
-    },
-    didParseCell(data) {
-      if (data.section === "body" && containsCjk(data.cell.raw)) {
-        reserveCjkCellHeight(data);
-        data.cell.text = [""];
-      }
-      if (data.section === "body" && [8, 10].includes(data.column.index)) {
-        const text = Array.isArray(data.cell.text) ? data.cell.text.join("") : String(data.cell.text || "");
-        if (text.includes("(") || text.trim().startsWith("-")) {
-          data.cell.styles.textColor = [220, 38, 38];
-        }
-      }
-    },
-    didDrawCell(data) {
-      if (data.section === "body" && containsCjk(data.cell.raw)) {
-        drawCjkCellText(doc, String(data.cell.raw ?? ""), data.cell, data.cell.styles);
-      }
-    }
-  });
 }
 
 function drawPostTradeTitle(doc, title, x, y, width) {
@@ -1325,6 +1335,47 @@ function drawPostTradeSignerRow(doc, label, signature, x, y, width) {
   doc.setTextColor(39, 55, 70);
   doc.text(label, x + 8, y + rowHeight / 2 + 3.5);
   addSignatureImage(doc, signature, x + labelWidth + 12, y + 7, width - labelWidth - 24, rowHeight - 14);
+  return y + rowHeight;
+}
+
+function drawPostTradeCommentsField(doc, value, x, y, width) {
+  const rowHeight = 58;
+  const labelWidth = width * 0.3;
+  const fieldPadding = 5;
+
+  doc.setFillColor(241, 245, 248);
+  doc.rect(x, y, labelWidth, rowHeight, "F");
+  doc.setDrawColor(184, 199, 211);
+  doc.rect(x, y, width, rowHeight);
+  doc.line(x + labelWidth, y, x + labelWidth, y + rowHeight);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10.5);
+  doc.setTextColor(39, 55, 70);
+  doc.text("RO Comments:", x + 8, y + rowHeight / 2 + 3.5);
+
+  const fieldX = x + labelWidth + fieldPadding;
+  const fieldY = y + fieldPadding;
+  const fieldWidth = width - labelWidth - fieldPadding * 2;
+  const fieldHeight = rowHeight - fieldPadding * 2;
+  const TextField = window.jspdf?.AcroFormTextField;
+
+  if (typeof TextField === "function" && typeof doc.addField === "function") {
+    const field = new TextField();
+    field.fieldName = "RO_Comments";
+    field.Rect = [fieldX, fieldY, fieldWidth, fieldHeight];
+    field.multiline = true;
+    field.fontSize = 9.5;
+    field.value = cleanText(value);
+    field.defaultValue = cleanText(value);
+    field.showWhenPrinted = true;
+    doc.addField(field);
+  } else if (cleanText(value)) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    const lines = doc.splitTextToSize(cleanText(value), fieldWidth - 8);
+    doc.text(lines.slice(0, 4), fieldX + 4, fieldY + 12);
+  }
+
   return y + rowHeight;
 }
 
@@ -1498,11 +1549,11 @@ function buildPreTradeDocxBytes(context) {
     docxSectionBand("Details"),
     docxKeyValueTable([
       ["Type of Transaction:", normalizeReportTradeType(transaction.type)],
-      ["Proposed Price:", formatMoney(transaction.price, transaction.ccy)],
-      ["Proposed Quantity:", transaction.qty || ""]
+      ["Proposed Price:", formatProposedPriceRange(transaction.price, transaction.ccy)],
+      ["Proposed Quantity:", formatReportQuantity(transaction.qty)]
     ], 10460),
     docxSectionBand("Investment Supporting"),
-    docxTable([[{ text: `Reason:\n${transaction.reason || fallbackPreTradeReason(transaction)}`, boldFirstLine: true }]], [10460]),
+    docxTable([[{ text: `Reason:\n${getPreTradeReason(transaction)}`, boldFirstLine: true }]], [10460]),
     docxSignerTable("Signed By PM:", els.pmNameInput.value.trim(), state.pmSignature, docx, 10460),
     docxTable([["I confirm that this investment has gone through pre-trade checks, does not exceed the fund's investment scope, does not violate any investment restrictions, and has taken climate impact into account as a risk factor."]], [10460]),
     docxSignerTable("Checked By:", els.checkedByNameInput.value.trim(), state.checkedBySignature, docx, 10460)
@@ -1513,17 +1564,8 @@ function buildPreTradeDocxBytes(context) {
 
 function buildPostTradeDocxBytes(context) {
   const docx = { images: [] };
-  const scheduleRows = [
-    FIELDS.map((field) => ({ text: field.pdf, fill: "1F2937", color: "FFFFFF", bold: true, align: "center", size: 14 })),
-    ...context.rows.map(({ transaction }) => FIELDS.map((field) => ({
-      text: transaction[field.key] ?? "",
-      size: 13,
-      align: field.numeric ? "right" : "left",
-      color: field.numeric && isNegative(transaction[field.key]) ? "DC2626" : "111827"
-    })))
-  ];
   const checked = state.defaultChecklistChecked;
-  const form = [
+  const body = [
     docxPostTradeTitle("Transaction Post-Trade Record"),
     docxTemplateSpacer(),
     docxPostTradeKeyValueTable([
@@ -1533,7 +1575,7 @@ function buildPostTradeDocxBytes(context) {
     ]),
     docxTemplateSpacer(),
     docxPostTradeCheckPanel([
-      "The complete transaction record is displayed in the attached schedule."
+      "The complete daily transaction record has been reviewed."
     ], checked, { fill: "F6F8FA" }),
     docxTemplateSpacer(),
     docxPostTradeSignerTable("Signed By Trader:", state.executedSignature, docx),
@@ -1553,23 +1595,12 @@ function buildPostTradeDocxBytes(context) {
       "No cross trades were identified."
     ], checked),
     docxTemplateSpacer(),
+    docxPostTradeCommentsTable(els.notesInput.value.trim()),
+    docxTemplateSpacer(),
     docxPostTradeSignerTable("Approved By RO:", state.roSignature, docx)
   ].join("");
-  const schedule = [
-    docxTitle("Transaction Schedule"),
-    docxKeyValueTable([
-      ["Fund Name:", context.company],
-      ["Trade Date:", formatDisplayTradeDate(context.tradeDate)]
-    ], 15398),
-    docxTable(
-      scheduleRows,
-      [900, 900, 1050, 1500, 2600, 900, 1100, 650, 1300, 800, 1100, 1700, 898],
-      { repeatHeader: true, cantSplitRows: true }
-    )
-  ].join("");
-  const body = `${form}${docxSectionBreak({ landscape: false, templateMargins: true, type: "nextPage" })}${schedule}`;
 
-  return createDocxPackage(docxDocumentXml(body, { landscape: true }), docx.images);
+  return createDocxPackage(docxDocumentXml(body, { landscape: false, templateMargins: true }), docx.images);
 }
 
 function docxDocumentXml(body, options) {
@@ -1584,12 +1615,7 @@ function docxSectionProperties(options = {}) {
   const margin = options.templateMargins
     ? { top: 749, right: 936, bottom: 749, left: 936 }
     : { top: 720, right: 720, bottom: 720, left: 720 };
-  const type = options.type ? `<w:type w:val="${options.type}"/>` : "";
-  return `<w:sectPr>${type}<w:pgSz w:w="${width}" w:h="${height}"${landscape ? ' w:orient="landscape"' : ""}/><w:pgMar w:top="${margin.top}" w:right="${margin.right}" w:bottom="${margin.bottom}" w:left="${margin.left}" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr>`;
-}
-
-function docxSectionBreak(options = {}) {
-  return `<w:p><w:pPr>${docxSectionProperties(options)}</w:pPr></w:p>`;
+  return `<w:sectPr><w:pgSz w:w="${width}" w:h="${height}"${landscape ? ' w:orient="landscape"' : ""}/><w:pgMar w:top="${margin.top}" w:right="${margin.right}" w:bottom="${margin.bottom}" w:left="${margin.left}" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr>`;
 }
 
 function docxTitle(text) {
@@ -1643,6 +1669,13 @@ function docxPostTradeSignerTable(label, signature, context) {
   ]], [4968, 5068]);
 }
 
+function docxPostTradeCommentsTable(value) {
+  return docxTable([[
+    { text: "RO Comments:", fill: "F1F5F8", color: "273746", bold: true, size: 21 },
+    { text: `${cleanText(value)}\n\n`, color: "273746", size: 19 }
+  ]], [2951, 7085]);
+}
+
 function docxSectionBand(text) {
   return docxParagraph(text, { bold: true, size: 20, fill: "E5E7EB", before: 160, after: 80 });
 }
@@ -1673,15 +1706,9 @@ function docxPageBreak() {
   return '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
 }
 
-function docxTable(rows, widths, options = {}) {
+function docxTable(rows, widths) {
   const grid = widths.map((width) => `<w:gridCol w:w="${width}"/>`).join("");
-  const body = rows.map((row, rowIndex) => {
-    const rowProperties = [
-      rowIndex === 0 && options.repeatHeader ? '<w:tblHeader w:val="true"/>' : "",
-      options.cantSplitRows ? "<w:cantSplit/>" : ""
-    ].join("");
-    return `<w:tr>${rowProperties ? `<w:trPr>${rowProperties}</w:trPr>` : ""}${row.map((cell, index) => docxCell(cell, widths[index] || widths[0])).join("")}</w:tr>`;
-  }).join("");
+  const body = rows.map((row) => `<w:tr>${row.map((cell, index) => docxCell(cell, widths[index] || widths[0])).join("")}</w:tr>`).join("");
   return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="6" w:color="9AA4B2"/><w:left w:val="single" w:sz="6" w:color="9AA4B2"/><w:bottom w:val="single" w:sz="6" w:color="9AA4B2"/><w:right w:val="single" w:sz="6" w:color="9AA4B2"/><w:insideH w:val="single" w:sz="6" w:color="9AA4B2"/><w:insideV w:val="single" w:sz="6" w:color="9AA4B2"/></w:tblBorders><w:tblCellMar><w:top w:w="90" w:type="dxa"/><w:left w:w="90" w:type="dxa"/><w:bottom w:w="90" w:type="dxa"/><w:right w:w="90" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>${grid}</w:tblGrid>${body}</w:tbl>`;
 }
 

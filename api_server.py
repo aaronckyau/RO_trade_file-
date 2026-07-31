@@ -622,7 +622,7 @@ def generate_pretrade_reasons(items: list[dict], gemini_api_key: str) -> list[di
             "security": str(item.get("security", "")),
             "description": str(item.get("description", "")),
             "qty": str(item.get("qty", "")),
-            "price": str(item.get("price", "")),
+            "proposedPriceRange": str(item.get("proposedPriceRange", item.get("price", ""))),
             "ccy": str(item.get("ccy", "")),
             "gross": str(item.get("gross", "")),
             "counterpart": str(item.get("counterpart", "")),
@@ -652,6 +652,9 @@ def generate_pretrade_reasons(items: list[dict], gemini_api_key: str) -> list[di
         "For each transaction, write 2-4 professional sentences explaining why the proposed trade can be considered for pre-trade review.\n"
         "Use only the provided fields. Do not mention data vendors, analyst ratings, price targets, or unprovided news.\n"
         "Keep the wording neutral: this is not investment advice and not a recommendation to outside investors.\n"
+        "Use BUY and SELL as the financial transaction terms. Never use the noun 'sale'.\n"
+        "Treat every quantity as an absolute positive quantity and never print a negative quantity.\n"
+        "When mentioning price, use only the provided proposedPriceRange, including its -1% to +1% range; do not state a single exact price.\n"
         "For buy/open trades, focus on intended portfolio exposure or strategy implementation.\n"
         "For sell/close trades, focus on risk control, rebalancing, exit, or exposure reduction when supported by the type.\n"
         "For futures/options, describe hedging, exposure management, roll, or tactical implementation only when consistent with the transaction fields.\n\n"

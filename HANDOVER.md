@@ -15,14 +15,17 @@ Current production behavior:
   - `PDF ZIP`: one folder per trade date, containing one `Pre_{Deal No.}.pdf` per transaction and one daily post-trade PDF.
   - `Word ZIP`: one folder per trade date, containing one `Pre_{Deal No.}.docx` per transaction and one daily post-trade `.docx`.
 - Pre-trade output has one separate file per transaction. Duplicate deal numbers receive `_2`, `_3`, and subsequent suffixes.
-- Post-trade output has one report per trade date with the full daily transaction schedule.
-- PDF key/value fields and post-trade schedule cells wrap to show full content without ellipsis; rows expand automatically and are kept together across schedule pages where possible.
-- Post-trade PDF and Word output follows the supplied professional template: a portrait sign-off form is the first page, followed by the complete daily transaction schedule on landscape attachment pages.
+- Post-trade output has one portrait form per trade date and does not include a transaction schedule or transaction-table attachment.
+- PDF key/value fields wrap to show full content without ellipsis and rows expand automatically.
+- Post-trade PDF and Word output follows the supplied professional sign-off form without adding landscape attachment pages.
 - The post-trade form contains seven checkboxes (two confirmations and five conclusion checks). All seven follow the Settings default-checklist option, which is enabled by default.
+- Settings includes a `Post-Trade RO Comments` text area. Its content appears immediately above `Approved By RO`; the PDF output uses an editable, printable multiline AcroForm text field, while the Word output uses a normally editable table cell. The field remains visible when left blank.
 - Settings provides separate `Fund Name` and `Dealing Account` fields. Both initially use the entity inferred from the uploaded filename, can be amended independently, and appear separately in Post-Trade PDF/Word output; a blank Dealing Account falls back to Fund Name.
 - Every transaction row in the Transaction tab has individual `Pre PDF` and `Pre Word` download buttons, including opening and closing trades.
 - The transaction-date toolbar has individual `Post PDF` and `Post Word` buttons for the selected trade date. If a date spans multiple preview pages, the post-trade report still includes the complete daily group.
 - All report text in the generated pre/post templates is English.
+- Pre-Trade `Reason` is deterministic for closing positions: positive `REALISED_PROFIT` produces a take-profit exit explanation, negative `REALISED_PROFIT` produces a stop-loss explanation, and zero/blank produces a neutral exposure-exit explanation. The text also records the realised amount when available, quantity, proposed price, and relevant risk/best-execution checks.
+- Pre-Trade reports use the financial terms `BUY` and `SELL` (never `sale`), display quantity as an absolute positive value, and display Proposed Price as a two-decimal range from -1% to +1% around the source price. Gemini receives the same normalized quantity and price range, and generated reasons are normalized again before export.
 
 ## Output Templates
 
@@ -51,13 +54,13 @@ Post-trade report:
 - Fund Name
 - Dealing Account
 - Trade Date
-- Checked statement that transaction records are fully displayed in the attached schedule
+- Checked statement that the complete daily transaction record has been reviewed
 - Signed By Trader
 - Checked statement that no executed trade breached the trading instruction
 - Confirmed By PM
 - Five-item checked Conclusion checklist
+- Editable RO Comments field
 - Approved By RO
-- Complete daily transaction table on landscape attachment pages
 
 ## Important Instruction For New Sessions
 
