@@ -107,6 +107,9 @@ const els = {
   pageCount: document.getElementById("pageCount"),
   downloadPdfBtn: document.getElementById("downloadPdfBtn"),
   downloadWordBtn: document.getElementById("downloadWordBtn"),
+  downloadPostPdfBtn: document.getElementById("downloadPostPdfBtn"),
+  downloadPostWordBtn: document.getElementById("downloadPostWordBtn"),
+  currentPostDate: document.getElementById("currentPostDate"),
   prevPageBtn: document.getElementById("prevPageBtn"),
   nextPageBtn: document.getElementById("nextPageBtn"),
   pageSelect: document.getElementById("pageSelect"),
@@ -131,6 +134,8 @@ function init() {
   els.excelInput.addEventListener("change", onExcelUpload);
   els.downloadPdfBtn.addEventListener("click", generatePdf);
   els.downloadWordBtn.addEventListener("click", generateWord);
+  els.downloadPostPdfBtn.addEventListener("click", () => generateCurrentPostTradeReport("pdf", els.downloadPostPdfBtn));
+  els.downloadPostWordBtn.addEventListener("click", () => generateCurrentPostTradeReport("docx", els.downloadPostWordBtn));
   els.generateAllReportsBtn.addEventListener("click", generateAllReports);
   els.mainTabButtons.forEach((button) => {
     button.addEventListener("click", () => setMainTab(button.dataset.mainTab));
@@ -415,6 +420,16 @@ function renderPager() {
   els.prevPageBtn.disabled = state.page <= 1 || pages === 0;
   els.nextPageBtn.disabled = state.page >= pages || pages === 0;
   if (pages > 0) els.pageSelect.value = String(state.page);
+  refreshPostTradeControls(transactionPages[state.page - 1]);
+}
+
+function refreshPostTradeControls(pageInfo) {
+  const hasTradeDate = Boolean(pageInfo?.tradeDate);
+  els.downloadPostPdfBtn.disabled = !hasTradeDate;
+  els.downloadPostWordBtn.disabled = !hasTradeDate;
+  els.currentPostDate.textContent = hasTradeDate
+    ? `${pageInfo.tradeDate} 每日報告`
+    : "未選擇交易日期";
 }
 
 function setPage(page) {
@@ -426,7 +441,7 @@ function setPage(page) {
 
 function renderBlankState() {
   els.thead.innerHTML = "";
-  els.tbody.innerHTML = `<tr><td class="blank-state" colspan="${FIELDS.length}">請上傳 Excel，或載入範例 Excel，以預覽交易指令表。</td></tr>`;
+  els.tbody.innerHTML = `<tr><td class="blank-state" colspan="${FIELDS.length + 1}">請上傳 Excel，或載入範例 Excel，以預覽交易指令表。</td></tr>`;
   renderPager();
   renderStrategyBlankState();
 }
@@ -440,11 +455,12 @@ function renderTable() {
   const pageInfo = getTransactionPages()[state.page - 1];
   const rows = pageInfo ? sortRowsByType(pageInfo.rows, state.transactionTypeSort) : [];
 
-  els.thead.innerHTML = `<tr>${FIELDS.map((field) => renderHeaderCell(field, "transaction")).join("")}</tr>`;
+  els.thead.innerHTML = `<tr><th class="report-action-header">Pre-Trade Report</th>${FIELDS.map((field) => renderHeaderCell(field, "transaction")).join("")}</tr>`;
   els.tbody.innerHTML = rows.map(({ transaction, index }) => {
-    return `<tr>${FIELDS.map((field) => renderCell(transaction, field, index)).join("")}</tr>`;
+    return `<tr>${renderPreTradeActionCell(index)}${FIELDS.map((field) => renderCell(transaction, field, index)).join("")}</tr>`;
   }).join("");
   bindSortButtons(els.thead);
+  bindPreTradeReportButtons();
 
   els.tbody.querySelectorAll("td[contenteditable='true']").forEach((cell) => {
     cell.addEventListener("blur", onCellEdit);
@@ -453,6 +469,22 @@ function renderTable() {
         event.preventDefault();
         cell.blur();
       }
+    });
+  });
+}
+
+function renderPreTradeActionCell(sourceIndex) {
+  return `<td class="report-action-cell"><div class="row-report-actions"><button class="small-action-btn" type="button" data-pre-report-index="${sourceIndex}" data-report-format="pdf">Pre PDF</button><button class="small-action-btn is-secondary" type="button" data-pre-report-index="${sourceIndex}" data-report-format="docx">Pre Word</button></div></td>`;
+}
+
+function bindPreTradeReportButtons() {
+  els.tbody.querySelectorAll("[data-pre-report-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      generateSinglePreTradeReport(
+        Number(button.dataset.preReportIndex),
+        button.dataset.reportFormat,
+        button
+      );
     });
   });
 }
@@ -792,6 +824,87 @@ function setStatus(message, isError = false) {
   els.statusText.style.color = isError ? "#b91c1c" : "";
 }
 
+async function generateSinglePreTradeReport(index, format, button) {
+  const transaction = state.transactions[index];
+  if (!transaction || !["pdf", "docx"].includes(format)) return;
+
+  const rowButtons = els.tbody.querySelectorAll(`[data-pre-report-index="${index}"]`);
+  const originalText = button.textContent;
+  rowButtons.forEach((control) => { control.disabled = true; });
+  button.textContent = "生成中...";
+
+  try {
+    await ensurePreTradeReasonsFor([{ transaction, index }]);
+    const company = getConfiguredFundName();
+    const context = { company, tradeDate: transaction.tradeDate, transaction };
+    const filename = buildPreTradeReportFilename(transaction, format, index);
+    if (format === "pdf") {
+      downloadBlob(
+        new Blob([buildPreTradePdfBytes(context)], { type: "application/pdf" }),
+        filename
+      );
+    } else {
+      downloadBlob(
+        new Blob([
+          buildPreTradeDocxBytes({
+            company,
+            tradeDate: transaction.tradeDate,
+            rows: [{ transaction, index }]
+          })
+        ], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }),
+        filename
+      );
+    }
+    setStatus(`${filename} 已產生。`);
+  } catch (error) {
+    setStatus(error.message || "Pre-Trade report generation failed.", true);
+  } finally {
+    rowButtons.forEach((control) => { control.disabled = false; });
+    button.textContent = originalText;
+  }
+}
+
+function getCurrentTransactionGroup() {
+  const pageInfo = getTransactionPages()[state.page - 1];
+  if (!pageInfo) return null;
+  return getTransactionGroups().find((group) => group.tradeDate === pageInfo.tradeDate) || null;
+}
+
+async function generateCurrentPostTradeReport(format, button) {
+  const group = getCurrentTransactionGroup();
+  if (!group || !["pdf", "docx"].includes(format)) return;
+
+  const originalText = button.textContent;
+  els.downloadPostPdfBtn.disabled = true;
+  els.downloadPostWordBtn.disabled = true;
+  button.textContent = "生成中...";
+
+  try {
+    const company = getConfiguredFundName();
+    const context = { company, tradeDate: group.tradeDate, rows: group.rows };
+    const filename = buildDailyReportFilename(company, group.tradeDate, "Post-Trade", format);
+    if (format === "pdf") {
+      downloadBlob(
+        new Blob([buildPostTradePdfBytes(context)], { type: "application/pdf" }),
+        filename
+      );
+    } else {
+      downloadBlob(
+        new Blob([buildPostTradeDocxBytes(context)], {
+          type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        }),
+        filename
+      );
+    }
+    setStatus(`${group.tradeDate} 每日 ${filename} 已產生。`);
+  } catch (error) {
+    setStatus(error.message || "Post-Trade report generation failed.", true);
+  } finally {
+    button.textContent = originalText;
+    refreshPostTradeControls(getTransactionPages()[state.page - 1]);
+  }
+}
+
 async function generatePdf() {
   if (!state.transactions.length) {
     setStatus("目前沒有可匯出的交易資料。", true);
@@ -843,7 +956,6 @@ async function generateWord() {
 }
 
 function buildDailyPdfReportFiles() {
-  const { jsPDF } = window.jspdf;
   const transactionGroups = getTransactionGroups();
   const company = getConfiguredFundName();
   const files = [];
@@ -852,30 +964,40 @@ function buildDailyPdfReportFiles() {
   transactionGroups.forEach((group) => {
     const folder = buildTradeDateFolderName(group.tradeDate);
     group.rows.forEach(({ transaction, index }) => {
-      const preDoc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
-      drawProfessionalPreTradePage(preDoc, { company, tradeDate: group.tradeDate, transaction });
       const name = buildUniqueZipPath(
         `${folder}/${buildPreTradeReportFilename(transaction, "pdf", index)}`,
         usedPaths
       );
       files.push({
         name,
-        data: new Uint8Array(preDoc.output("arraybuffer"))
+        data: buildPreTradePdfBytes({ company, tradeDate: group.tradeDate, transaction })
       });
     });
 
-    const postDoc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
-    drawProfessionalPostTradeReport(postDoc, { company, tradeDate: group.tradeDate, rows: group.rows });
     files.push({
       name: buildUniqueZipPath(
         `${folder}/${buildDailyReportFilename(company, group.tradeDate, "Post-Trade", "pdf")}`,
         usedPaths
       ),
-      data: new Uint8Array(postDoc.output("arraybuffer"))
+      data: buildPostTradePdfBytes({ company, tradeDate: group.tradeDate, rows: group.rows })
     });
   });
 
   return files;
+}
+
+function buildPreTradePdfBytes(context) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+  drawProfessionalPreTradePage(doc, context);
+  return new Uint8Array(doc.output("arraybuffer"));
+}
+
+function buildPostTradePdfBytes(context) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+  drawProfessionalPostTradeReport(doc, context);
+  return new Uint8Array(doc.output("arraybuffer"));
 }
 
 function buildPdfFilename(company, tradeDate) {
@@ -923,9 +1045,13 @@ function getConfiguredFundName() {
 }
 
 async function ensurePreTradeReasons() {
-  const missing = state.transactions
-    .map((transaction, index) => ({ transaction, index }))
-    .filter(({ transaction }) => !cleanText(transaction.reason));
+  return ensurePreTradeReasonsFor(
+    state.transactions.map((transaction, index) => ({ transaction, index }))
+  );
+}
+
+async function ensurePreTradeReasonsFor(candidates) {
+  const missing = candidates.filter(({ transaction }) => !cleanText(transaction.reason));
   if (!missing.length) return;
 
   setStatus(`正在用 Gemini 生成 ${missing.length} 筆 pre-trade reason...`);

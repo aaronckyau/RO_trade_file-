@@ -377,6 +377,23 @@ button:disabled {
   border-bottom: 0;
 }
 
+.daily-report-tools,
+.row-report-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.daily-report-tools {
+  margin-left: auto;
+}
+
+.daily-report-date {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .pager {
   display: flex;
   align-items: center;
@@ -446,6 +463,21 @@ th {
   opacity: 0.6;
 }
 
+.small-action-btn.is-secondary {
+  background: #ffffff;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.report-action-header,
+.report-action-cell {
+  min-width: 152px;
+}
+
+.row-report-actions {
+  white-space: nowrap;
+}
+
 .muted-label {
   color: var(--muted);
   font-size: 12px;
@@ -504,6 +536,11 @@ td[contenteditable="true"]:focus {
   .table-tools {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .daily-report-tools {
+    margin-left: 0;
+    flex-wrap: wrap;
   }
 
   .control-grid,

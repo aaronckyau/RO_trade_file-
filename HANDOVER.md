@@ -16,6 +16,8 @@ Current production behavior:
   - `Word ZIP`: one folder per trade date, containing one `Pre_{Deal No.}.docx` per transaction and one daily post-trade `.docx`.
 - Pre-trade output has one separate file per transaction. Duplicate deal numbers receive `_2`, `_3`, and subsequent suffixes.
 - Post-trade output has one report per trade date with the full daily transaction schedule.
+- Every transaction row in the Transaction tab has individual `Pre PDF` and `Pre Word` download buttons, including opening and closing trades.
+- The transaction-date toolbar has individual `Post PDF` and `Post Word` buttons for the selected trade date. If a date spans multiple preview pages, the post-trade report still includes the complete daily group.
 - All report text in the generated pre/post templates is English.
 
 ## Output Templates
@@ -247,6 +249,8 @@ Key areas:
 - `getTransactionGroups()` groups rows by trade date.
 - `generatePdf()` creates the pre/post PDF ZIP.
 - `generateWord()` creates the pre/post `.docx` ZIP.
+- `generateSinglePreTradeReport()` downloads one pre-trade PDF or Word file for any transaction row.
+- `generateCurrentPostTradeReport()` downloads the complete daily post-trade PDF or Word file for the selected trade date.
 - `ensurePreTradeReasons()` calls `/RO_transaction/api/pretrade-reasons` in batches and stores Gemini-generated reasons on each transaction.
 - `buildDailyPdfReportFiles()` builds one dated ZIP folder containing a `Pre_{Deal No.}.pdf` for every transaction and one post-trade PDF per trade date.
 - `drawProfessionalPreTradePage()` draws the new pre-trade template.

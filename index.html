@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>RO 交易指令 PDF 產生器</title>
-    <link rel="stylesheet" href="styles.css?v=20260731-pre-post-output" />
+    <link rel="stylesheet" href="styles.css?v=20260731-individual-reports" />
   </head>
   <body>
     <main class="app-shell">
@@ -66,6 +66,11 @@
               <label for="pageSelect">預覽頁面</label>
               <select id="pageSelect" disabled></select>
               <button id="nextPageBtn" type="button" class="ghost-btn" disabled>下一頁</button>
+            </div>
+            <div class="daily-report-tools" aria-label="每日 Post-Trade 報告">
+              <span id="currentPostDate" class="daily-report-date">未選擇交易日期</span>
+              <button id="downloadPostPdfBtn" type="button" class="small-action-btn" disabled>Post PDF</button>
+              <button id="downloadPostWordBtn" type="button" class="small-action-btn is-secondary" disabled>Post Word</button>
             </div>
             <div id="statusText" class="status-text">請先上傳 Excel 檔案。</div>
           </section>
@@ -161,6 +166,6 @@
     <script src="vendor/xlsx.full.min.js"></script>
     <script src="vendor/jspdf.umd.min.js"></script>
     <script src="vendor/jspdf.plugin.autotable.min.js"></script>
-    <script src="app.js?v=20260731-pre-deal-filenames"></script>
+    <script src="app.js?v=20260731-individual-reports"></script>
   </body>
 </html>
