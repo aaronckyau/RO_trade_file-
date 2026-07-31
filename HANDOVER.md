@@ -12,9 +12,9 @@ Current production behavior:
 - The inferred fund name can be amended in Settings.
 - Transactions are grouped by `Trade Date`.
 - The Transaction tab exports two ZIP options:
-  - `PDF ZIP`: one pre-trade PDF and one post-trade PDF for each trade date.
-  - `Word ZIP`: one `.docx` pre-trade file and one `.docx` post-trade file for each trade date.
-- Pre-trade output has one page per transaction.
+  - `PDF ZIP`: one folder per trade date, containing one `Pre_{Deal No.}.pdf` per transaction and one daily post-trade PDF.
+  - `Word ZIP`: one folder per trade date, containing one `Pre_{Deal No.}.docx` per transaction and one daily post-trade `.docx`.
+- Pre-trade output has one separate file per transaction. Duplicate deal numbers receive `_2`, `_3`, and subsequent suffixes.
 - Post-trade output has one report per trade date with the full daily transaction schedule.
 - All report text in the generated pre/post templates is English.
 
@@ -63,7 +63,7 @@ Core system means:
 - Multiple-file upload and merge behavior.
 - Fund/dealing account inference from filename.
 - Grouping by `Trade Date`.
-- Pre-trade one page per transaction.
+- Pre-trade one file per transaction, named from its deal number.
 - Post-trade one report per trade date.
 - ZIP generation.
 - Existing VPS route `/RO_transaction/`.
@@ -248,10 +248,10 @@ Key areas:
 - `generatePdf()` creates the pre/post PDF ZIP.
 - `generateWord()` creates the pre/post `.docx` ZIP.
 - `ensurePreTradeReasons()` calls `/RO_transaction/api/pretrade-reasons` in batches and stores Gemini-generated reasons on each transaction.
-- `buildDailyPdfReportFiles()` builds one pre-trade PDF and one post-trade PDF per trade date.
+- `buildDailyPdfReportFiles()` builds one dated ZIP folder containing a `Pre_{Deal No.}.pdf` for every transaction and one post-trade PDF per trade date.
 - `drawProfessionalPreTradePage()` draws the new pre-trade template.
 - `drawProfessionalPostTradeReport()` draws the new post-trade template.
-- `buildDailyWordReportFiles()` builds `.docx` files with a minimal OpenXML package.
+- `buildDailyWordReportFiles()` builds the matching dated folder structure with one `Pre_{Deal No.}.docx` per transaction and one daily post-trade `.docx`.
 - `drawCjkCellText()` renders table cells containing Chinese as canvas images before inserting them into jsPDF.
 - `reserveCjkCellHeight()` measures wrapped height for multi-line Chinese descriptions.
 - `addSignatureImage()` preserves uploaded signature aspect ratio and centers the image inside the available signature box.

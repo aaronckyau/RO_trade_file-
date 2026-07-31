@@ -846,27 +846,36 @@ function buildDailyPdfReportFiles() {
   const { jsPDF } = window.jspdf;
   const transactionGroups = getTransactionGroups();
   const company = getConfiguredFundName();
-  return transactionGroups.flatMap((group) => {
-    const preDoc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
-    group.rows.forEach(({ transaction }, index) => {
-      if (index > 0) preDoc.addPage("a4", "portrait");
+  const files = [];
+  const usedPaths = new Set();
+
+  transactionGroups.forEach((group) => {
+    const folder = buildTradeDateFolderName(group.tradeDate);
+    group.rows.forEach(({ transaction, index }) => {
+      const preDoc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
       drawProfessionalPreTradePage(preDoc, { company, tradeDate: group.tradeDate, transaction });
+      const name = buildUniqueZipPath(
+        `${folder}/${buildPreTradeReportFilename(transaction, "pdf", index)}`,
+        usedPaths
+      );
+      files.push({
+        name,
+        data: new Uint8Array(preDoc.output("arraybuffer"))
+      });
     });
 
     const postDoc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
     drawProfessionalPostTradeReport(postDoc, { company, tradeDate: group.tradeDate, rows: group.rows });
-
-    return [
-      {
-        name: buildDailyReportFilename(company, group.tradeDate, "Pre-Trade", "pdf"),
-        data: new Uint8Array(preDoc.output("arraybuffer"))
-      },
-      {
-        name: buildDailyReportFilename(company, group.tradeDate, "Post-Trade", "pdf"),
-        data: new Uint8Array(postDoc.output("arraybuffer"))
-      }
-    ];
+    files.push({
+      name: buildUniqueZipPath(
+        `${folder}/${buildDailyReportFilename(company, group.tradeDate, "Post-Trade", "pdf")}`,
+        usedPaths
+      ),
+      data: new Uint8Array(postDoc.output("arraybuffer"))
+    });
   });
+
+  return files;
 }
 
 function buildPdfFilename(company, tradeDate) {
@@ -875,6 +884,38 @@ function buildPdfFilename(company, tradeDate) {
 
 function buildDailyReportFilename(company, tradeDate, label, extension) {
   return `${sanitizeFilenamePart(company)}_${formatTradeDateForFilename(tradeDate)}_${label}_Record.${extension}`;
+}
+
+function buildTradeDateFolderName(tradeDate) {
+  const value = cleanText(tradeDate);
+  return value && value !== "No date" ? sanitizeFilenamePart(value) : "no_date";
+}
+
+function buildPreTradeReportFilename(transaction, extension, fallbackIndex) {
+  const dealNumber = cleanText(transaction?.deal);
+  const identifier = dealNumber
+    ? sanitizeFilenamePart(dealNumber)
+    : `missing_deal_${Number(fallbackIndex) + 1}`;
+  return `Pre_${identifier}.${extension}`;
+}
+
+function buildUniqueZipPath(path, usedPaths) {
+  if (!usedPaths.has(path)) {
+    usedPaths.add(path);
+    return path;
+  }
+
+  const extensionIndex = path.lastIndexOf(".");
+  const basename = extensionIndex >= 0 ? path.slice(0, extensionIndex) : path;
+  const extension = extensionIndex >= 0 ? path.slice(extensionIndex) : "";
+  let suffix = 2;
+  let candidate = `${basename}_${suffix}${extension}`;
+  while (usedPaths.has(candidate)) {
+    suffix += 1;
+    candidate = `${basename}_${suffix}${extension}`;
+  }
+  usedPaths.add(candidate);
+  return candidate;
 }
 
 function getConfiguredFundName() {
@@ -1162,18 +1203,34 @@ function drawPdfBullets(doc, items, x, y, width) {
 
 function buildDailyWordReportFiles() {
   const company = getConfiguredFundName();
-  return getTransactionGroups().flatMap((group) => {
-    return [
-      {
-        name: buildDailyReportFilename(company, group.tradeDate, "Pre-Trade", "docx"),
-        data: buildPreTradeDocxBytes({ company, tradeDate: group.tradeDate, rows: group.rows })
-      },
-      {
-        name: buildDailyReportFilename(company, group.tradeDate, "Post-Trade", "docx"),
-        data: buildPostTradeDocxBytes({ company, tradeDate: group.tradeDate, rows: group.rows })
-      }
-    ];
+  const files = [];
+  const usedPaths = new Set();
+
+  getTransactionGroups().forEach((group) => {
+    const folder = buildTradeDateFolderName(group.tradeDate);
+    group.rows.forEach(({ transaction, index }) => {
+      files.push({
+        name: buildUniqueZipPath(
+          `${folder}/${buildPreTradeReportFilename(transaction, "docx", index)}`,
+          usedPaths
+        ),
+        data: buildPreTradeDocxBytes({
+          company,
+          tradeDate: group.tradeDate,
+          rows: [{ transaction, index }]
+        })
+      });
+    });
+    files.push({
+      name: buildUniqueZipPath(
+        `${folder}/${buildDailyReportFilename(company, group.tradeDate, "Post-Trade", "docx")}`,
+        usedPaths
+      ),
+      data: buildPostTradeDocxBytes({ company, tradeDate: group.tradeDate, rows: group.rows })
+    });
   });
+
+  return files;
 }
 
 function buildPreTradeDocxBytes(context) {
