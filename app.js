@@ -1179,7 +1179,7 @@ function formatProposedPriceRange(price, ccy) {
   const number = parseSignedReportNumber(price);
   if (number === null) return `${currency} price not provided`;
   const basePrice = Math.abs(number);
-  return `${currency} ${(basePrice * 0.99).toFixed(2)} to ${(basePrice * 1.01).toFixed(2)} (-1% to +1%)`;
+  return `${currency} ${(basePrice * 0.99).toFixed(1)} to ${(basePrice * 1.01).toFixed(1)}`;
 }
 
 function normalizeFinancialReasonTerms(reason) {

@@ -654,7 +654,7 @@ def generate_pretrade_reasons(items: list[dict], gemini_api_key: str) -> list[di
         "Keep the wording neutral: this is not investment advice and not a recommendation to outside investors.\n"
         "Use BUY and SELL as the financial transaction terms. Never use the noun 'sale'.\n"
         "Treat every quantity as an absolute positive quantity and never print a negative quantity.\n"
-        "When mentioning price, use only the provided proposedPriceRange, including its -1% to +1% range; do not state a single exact price.\n"
+        "When mentioning price, use only the provided proposedPriceRange; do not state a single exact price or add percentage-range wording.\n"
         "For buy/open trades, focus on intended portfolio exposure or strategy implementation.\n"
         "For sell/close trades, focus on risk control, rebalancing, exit, or exposure reduction when supported by the type.\n"
         "For futures/options, describe hedging, exposure management, roll, or tactical implementation only when consistent with the transaction fields.\n\n"
