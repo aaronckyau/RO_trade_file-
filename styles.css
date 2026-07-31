@@ -316,6 +316,13 @@ button:disabled {
   padding: 4px 0 16px;
 }
 
+.summary-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .summary-strip > div {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -503,6 +510,14 @@ td[contenteditable="true"]:focus {
   .settings-grid,
   .summary-strip {
     grid-template-columns: 1fr;
+  }
+
+  .summary-actions {
+    align-items: stretch;
+  }
+
+  .summary-actions button {
+    flex: 1 1 160px;
   }
 
   .notes-block {

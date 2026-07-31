@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>RO 交易指令 PDF 產生器</title>
-    <link rel="stylesheet" href="styles.css?v=20260622tabs-and-batch" />
+    <link rel="stylesheet" href="styles.css?v=20260731-pre-post-output" />
   </head>
   <body>
     <main class="app-shell">
@@ -12,7 +12,7 @@
         <div class="top-copy">
           <div class="eyebrow">Transaction Compliance Workspace</div>
           <h1>RO 交易指令 PDF 產生器</h1>
-          <p>上傳一份或多份交易 Excel、檢視或修改表格，設定簽名與日期後，匯出每頁 20 筆交易的 PDF。</p>
+          <p>上傳一份或多份交易 Excel、檢視或修改表格，設定簽名與日期後，匯出每日 pre-trade / post-trade 報告。</p>
         </div>
         <div class="top-actions">
           <button id="settingsBtn" type="button" class="ghost-btn">設定</button>
@@ -54,7 +54,10 @@
               <span class="summary-value">20</span>
               <span class="summary-label">每頁交易筆數</span>
             </div>
-            <button id="downloadPdfBtn" type="button" class="primary-btn" disabled>產生 ZIP</button>
+            <div class="summary-actions">
+              <button id="downloadPdfBtn" type="button" class="primary-btn" disabled>產生 PDF ZIP</button>
+              <button id="downloadWordBtn" type="button" class="ghost-btn" disabled>產生 Word ZIP</button>
+            </div>
           </section>
 
           <section class="table-tools" aria-label="表格控制">
@@ -100,12 +103,26 @@
 
         <section class="settings-grid">
           <div class="control-block">
-            <label for="companyInput">基金 / 實體名稱</label>
+            <label for="companyInput">Fund Name / Dealing Account</label>
             <input id="companyInput" type="text" value="X Squared Capital Management LPF" />
           </div>
 
           <div class="control-block">
-            <label for="executedNameInput">執行人</label>
+            <label for="pmNameInput">Fund Portfolio Manager / PM</label>
+            <input id="pmNameInput" type="text" placeholder="Name" />
+            <input id="pmSigInput" type="file" accept="image/*" />
+            <img id="pmSigPreview" class="signature-preview" alt="PM signature preview" />
+          </div>
+
+          <div class="control-block">
+            <label for="checkedByNameInput">Checked By</label>
+            <input id="checkedByNameInput" type="text" placeholder="Name" />
+            <input id="checkedBySigInput" type="file" accept="image/*" />
+            <img id="checkedBySigPreview" class="signature-preview" alt="Checked by signature preview" />
+          </div>
+
+          <div class="control-block">
+            <label for="executedNameInput">Signed By Trader</label>
             <input id="executedNameInput" type="text" placeholder="姓名" />
             <input id="executedDateInput" type="date" />
             <input id="executedSigInput" type="file" accept="image/*" />
@@ -113,7 +130,7 @@
           </div>
 
           <div class="control-block">
-            <label for="roNameInput">RO 覆核</label>
+            <label for="roNameInput">Approved By RO</label>
             <input id="roNameInput" type="text" placeholder="姓名" />
             <input id="roDateInput" type="date" />
             <input id="roSigInput" type="file" accept="image/*" />
@@ -144,6 +161,6 @@
     <script src="vendor/xlsx.full.min.js"></script>
     <script src="vendor/jspdf.umd.min.js"></script>
     <script src="vendor/jspdf.plugin.autotable.min.js"></script>
-    <script src="app.js?v=20260624-signature-right-slot"></script>
+    <script src="app.js?v=20260731-pre-post-output"></script>
   </body>
 </html>

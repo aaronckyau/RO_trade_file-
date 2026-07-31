@@ -613,6 +613,80 @@ def classify_transactions(items: list[dict], gemini_api_key: str) -> list[dict]:
     return results
 
 
+def generate_pretrade_reasons(items: list[dict], gemini_api_key: str) -> list[dict]:
+    rows = [
+        {
+            "index": item.get("index", index),
+            "tradeDate": str(item.get("tradeDate", "")),
+            "type": str(item.get("type", "")),
+            "security": str(item.get("security", "")),
+            "description": str(item.get("description", "")),
+            "qty": str(item.get("qty", "")),
+            "price": str(item.get("price", "")),
+            "ccy": str(item.get("ccy", "")),
+            "gross": str(item.get("gross", "")),
+            "counterpart": str(item.get("counterpart", "")),
+            "kind": str(item.get("kind", "")),
+        }
+        for index, item in enumerate(items)
+    ]
+    schema = {
+        "type": "object",
+        "properties": {
+            "rows": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "index": {"type": "integer"},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["index", "reason"],
+                },
+            }
+        },
+        "required": ["rows"],
+    }
+    prompt = (
+        "You are preparing concise English pre-trade support text for internal fund compliance records.\n"
+        "For each transaction, write 2-4 professional sentences explaining why the proposed trade can be considered for pre-trade review.\n"
+        "Use only the provided fields. Do not mention data vendors, analyst ratings, price targets, or unprovided news.\n"
+        "Keep the wording neutral: this is not investment advice and not a recommendation to outside investors.\n"
+        "For buy/open trades, focus on intended portfolio exposure or strategy implementation.\n"
+        "For sell/close trades, focus on risk control, rebalancing, exit, or exposure reduction when supported by the type.\n"
+        "For futures/options, describe hedging, exposure management, roll, or tactical implementation only when consistent with the transaction fields.\n\n"
+        f"Data JSON:\n{json.dumps(rows, ensure_ascii=False)}"
+    )
+    body = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 8000,
+            "responseMimeType": "application/json",
+            "responseSchema": schema,
+        },
+    }
+    response = http_json(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
+        headers={"x-goog-api-key": gemini_api_key},
+        data=body,
+        timeout=70,
+    )
+    text = "\n".join(part.get("text", "") for part in response["candidates"][0]["content"]["parts"])
+    parsed = json.loads(text)
+
+    results = []
+    for row in parsed.get("rows", []):
+        try:
+            index = int(row.get("index"))
+        except (TypeError, ValueError):
+            continue
+        reason = str(row.get("reason", "")).strip()
+        if reason:
+            results.append({"index": index, "reason": reason})
+    return results
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "ROTransactionAPI/1.0"
 
@@ -626,6 +700,9 @@ class Handler(BaseHTTPRequestHandler):
         route = self.path.rstrip("/")
         if route == "/RO_transaction/api/classify-transactions":
             self.handle_classify()
+            return
+        if route == "/RO_transaction/api/pretrade-reasons":
+            self.handle_pretrade_reasons()
             return
         if route != "/RO_transaction/api/strategy-report":
             json_response(self, 404, {"error": "Not found"})
@@ -681,6 +758,26 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             print(f"Unhandled classify error: {exc}", file=sys.stderr)
             json_response(self, 500, {"error": "Failed to classify transactions."})
+
+    def handle_pretrade_reasons(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            items = payload.get("transactions")
+            if not isinstance(items, list) or not items:
+                raise ValueError("No transactions for reason generation.")
+            env = load_env()
+            if not env.get("GEMINI_API_KEY"):
+                raise RuntimeError("Server API keys are not configured.")
+            results = generate_pretrade_reasons(items, env["GEMINI_API_KEY"])
+            json_response(self, 200, {"results": results})
+        except (ValueError, RuntimeError) as exc:
+            json_response(self, 400, {"error": str(exc)})
+        except urllib.error.HTTPError as exc:
+            json_response(self, 502, {"error": f"External API error: HTTP {exc.code}"})
+        except Exception as exc:
+            print(f"Unhandled pretrade reason error: {exc}", file=sys.stderr)
+            json_response(self, 500, {"error": "Failed to generate pre-trade reasons."})
 
     def log_message(self, format: str, *args) -> None:
         print(f"{self.address_string()} - {format % args}", file=sys.stderr)

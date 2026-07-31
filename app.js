@@ -1,4 +1,5 @@
 const TRANSACTIONS_PER_PAGE = 20;
+const PRE_TRADE_REASON_BATCH_SIZE = 40;
 
 const TYPE_LABELS = {
   BO: "Buy to Open",
@@ -64,6 +65,8 @@ const state = {
   sourceFiles: [],
   sourceFilesExpanded: false,
   page: 1,
+  pmSignature: "",
+  checkedBySignature: "",
   executedSignature: "",
   roSignature: "",
   defaultChecklistChecked: true,
@@ -84,6 +87,12 @@ const els = {
   transactionPanel: document.getElementById("transactionPanel"),
   strategyPanel: document.getElementById("strategyPanel"),
   companyInput: document.getElementById("companyInput"),
+  pmNameInput: document.getElementById("pmNameInput"),
+  pmSigInput: document.getElementById("pmSigInput"),
+  pmSigPreview: document.getElementById("pmSigPreview"),
+  checkedByNameInput: document.getElementById("checkedByNameInput"),
+  checkedBySigInput: document.getElementById("checkedBySigInput"),
+  checkedBySigPreview: document.getElementById("checkedBySigPreview"),
   executedNameInput: document.getElementById("executedNameInput"),
   executedDateInput: document.getElementById("executedDateInput"),
   executedSigInput: document.getElementById("executedSigInput"),
@@ -97,6 +106,7 @@ const els = {
   rowCount: document.getElementById("rowCount"),
   pageCount: document.getElementById("pageCount"),
   downloadPdfBtn: document.getElementById("downloadPdfBtn"),
+  downloadWordBtn: document.getElementById("downloadWordBtn"),
   prevPageBtn: document.getElementById("prevPageBtn"),
   nextPageBtn: document.getElementById("nextPageBtn"),
   pageSelect: document.getElementById("pageSelect"),
@@ -120,6 +130,7 @@ function init() {
   });
   els.excelInput.addEventListener("change", onExcelUpload);
   els.downloadPdfBtn.addEventListener("click", generatePdf);
+  els.downloadWordBtn.addEventListener("click", generateWord);
   els.generateAllReportsBtn.addEventListener("click", generateAllReports);
   els.mainTabButtons.forEach((button) => {
     button.addEventListener("click", () => setMainTab(button.dataset.mainTab));
@@ -130,6 +141,8 @@ function init() {
   els.prevPageBtn.addEventListener("click", () => setPage(state.page - 1));
   els.nextPageBtn.addEventListener("click", () => setPage(state.page + 1));
   els.pageSelect.addEventListener("change", (event) => setPage(Number(event.target.value)));
+  els.pmSigInput.addEventListener("change", (event) => loadSignature(event, "pmSignature", els.pmSigPreview));
+  els.checkedBySigInput.addEventListener("change", (event) => loadSignature(event, "checkedBySignature", els.checkedBySigPreview));
   els.executedSigInput.addEventListener("change", (event) => loadSignature(event, "executedSignature", els.executedSigPreview));
   els.roSigInput.addEventListener("change", (event) => loadSignature(event, "roSignature", els.roSigPreview));
 
@@ -192,7 +205,8 @@ async function parseUploadedWorkbooks(files) {
     renderTable();
     renderStrategyTable();
     els.downloadPdfBtn.disabled = !transactions.length;
-    setStatus(`已從 ${sourceFiles.length} 個檔案載入 ${transactions.length} 筆交易。產生 PDF 前可以直接修改表格內容。`);
+    els.downloadWordBtn.disabled = !transactions.length;
+    setStatus(`已從 ${sourceFiles.length} 個檔案載入 ${transactions.length} 筆交易。產生 report 前可以直接修改表格內容。`);
     classifyTransactions();
   } catch (error) {
     state.transactions = [];
@@ -203,6 +217,7 @@ async function parseUploadedWorkbooks(files) {
     renderBlankState();
     renderStrategyBlankState();
     els.downloadPdfBtn.disabled = true;
+    els.downloadWordBtn.disabled = true;
     setStatus(error.message, true);
   }
 }
@@ -744,7 +759,7 @@ function onCellEdit(event) {
   renderPager();
   renderTable();
   renderStrategyTable();
-  setStatus("表格已更新。PDF 會使用修改後的數值。");
+  setStatus("表格已更新。Report 會使用修改後的數值。");
 }
 
 function isNegative(value) {
@@ -777,46 +792,649 @@ function setStatus(message, isError = false) {
   els.statusText.style.color = isError ? "#b91c1c" : "";
 }
 
-function generatePdf() {
+async function generatePdf() {
   if (!state.transactions.length) {
     setStatus("目前沒有可匯出的交易資料。", true);
     return;
   }
 
+  const originalText = els.downloadPdfBtn.textContent;
+  els.downloadPdfBtn.disabled = true;
+  els.downloadWordBtn.disabled = true;
+  els.downloadPdfBtn.textContent = "生成中...";
+  try {
+    await ensurePreTradeReasons();
+    const files = buildDailyPdfReportFiles();
+    const company = getConfiguredFundName();
+    downloadBlob(createZipBlob(files), `${sanitizeFilenamePart(company)}_daily_pre_post_trade_reports_pdf.zip`);
+    setStatus(`PDF ZIP 已產生，共 ${files.length} 個 pre/post trade report 檔案。`);
+  } catch (error) {
+    setStatus(error.message || "PDF report generation failed.", true);
+  } finally {
+    els.downloadPdfBtn.textContent = originalText;
+    els.downloadPdfBtn.disabled = !state.transactions.length;
+    els.downloadWordBtn.disabled = !state.transactions.length;
+  }
+}
+
+async function generateWord() {
+  if (!state.transactions.length) {
+    setStatus("目前沒有可匯出的交易資料。", true);
+    return;
+  }
+
+  const originalText = els.downloadWordBtn.textContent;
+  els.downloadPdfBtn.disabled = true;
+  els.downloadWordBtn.disabled = true;
+  els.downloadWordBtn.textContent = "生成中...";
+  try {
+    await ensurePreTradeReasons();
+    const files = buildDailyWordReportFiles();
+    const company = getConfiguredFundName();
+    downloadBlob(createZipBlob(files), `${sanitizeFilenamePart(company)}_daily_pre_post_trade_reports_word.zip`);
+    setStatus(`Word ZIP 已產生，共 ${files.length} 個 pre/post trade report 檔案。`);
+  } catch (error) {
+    setStatus(error.message || "Word report generation failed.", true);
+  } finally {
+    els.downloadWordBtn.textContent = originalText;
+    els.downloadPdfBtn.disabled = !state.transactions.length;
+    els.downloadWordBtn.disabled = !state.transactions.length;
+  }
+}
+
+function buildDailyPdfReportFiles() {
   const { jsPDF } = window.jspdf;
   const transactionGroups = getTransactionGroups();
-  const company = els.companyInput.value.trim() || "Transaction Order";
-  const source = state.sourceFile || "Uploaded Excel";
-  const zipFiles = transactionGroups.map((group) => {
-    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
-    const dayPages = getPagesForTransactionGroup(group);
-    const pages = dayPages.length;
-
-    drawPreTradeCompliancePage(doc, { company, tradeDate: group.tradeDate });
-
-    dayPages.forEach((pageInfo, index) => {
-      const page = index + 1;
-      doc.addPage("a4", "landscape");
-      const chunk = pageInfo.rows.map(({ transaction }) => transaction);
-      drawPdfPage(doc, { company, source, page, pages, tradeDate: pageInfo.tradeDate, chunk });
+  const company = getConfiguredFundName();
+  return transactionGroups.flatMap((group) => {
+    const preDoc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+    group.rows.forEach(({ transaction }, index) => {
+      if (index > 0) preDoc.addPage("a4", "portrait");
+      drawProfessionalPreTradePage(preDoc, { company, tradeDate: group.tradeDate, transaction });
     });
 
-    doc.addPage("a4", "landscape");
-    drawPostTradeCompliancePage(doc, { company, tradeDate: group.tradeDate });
+    const postDoc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    drawProfessionalPostTradeReport(postDoc, { company, tradeDate: group.tradeDate, rows: group.rows });
 
-    return {
-      name: buildPdfFilename(company, group.tradeDate),
-      data: new Uint8Array(doc.output("arraybuffer"))
-    };
+    return [
+      {
+        name: buildDailyReportFilename(company, group.tradeDate, "Pre-Trade", "pdf"),
+        data: new Uint8Array(preDoc.output("arraybuffer"))
+      },
+      {
+        name: buildDailyReportFilename(company, group.tradeDate, "Post-Trade", "pdf"),
+        data: new Uint8Array(postDoc.output("arraybuffer"))
+      }
+    ];
   });
-
-  const zipName = `${sanitizeFilenamePart(company)}_transaction_order_pdfs.zip`;
-  downloadBlob(createZipBlob(zipFiles), zipName);
-  setStatus(`PDF ZIP 已產生，共 ${zipFiles.length} 個交易日期檔案。`);
 }
 
 function buildPdfFilename(company, tradeDate) {
   return `${sanitizeFilenamePart(company)}_${formatTradeDateForFilename(tradeDate)}.pdf`;
+}
+
+function buildDailyReportFilename(company, tradeDate, label, extension) {
+  return `${sanitizeFilenamePart(company)}_${formatTradeDateForFilename(tradeDate)}_${label}_Record.${extension}`;
+}
+
+function getConfiguredFundName() {
+  return els.companyInput.value.trim() || "Transaction Order";
+}
+
+async function ensurePreTradeReasons() {
+  const missing = state.transactions
+    .map((transaction, index) => ({ transaction, index }))
+    .filter(({ transaction }) => !cleanText(transaction.reason));
+  if (!missing.length) return;
+
+  setStatus(`正在用 Gemini 生成 ${missing.length} 筆 pre-trade reason...`);
+  try {
+    for (let start = 0; start < missing.length; start += PRE_TRADE_REASON_BATCH_SIZE) {
+      const batch = missing.slice(start, start + PRE_TRADE_REASON_BATCH_SIZE);
+      const response = await fetch(getPreTradeReasonsApiUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transactions: batch.map(({ transaction, index }) => ({
+            index,
+            tradeDate: transaction.tradeDate,
+            type: transaction.type,
+            security: transaction.security,
+            description: transaction.description,
+            qty: transaction.qty,
+            price: transaction.price,
+            ccy: transaction.ccy,
+            gross: transaction.gross,
+            counterpart: transaction.counterpart,
+            kind: resolvedKind(transaction) || "unsupported"
+          }))
+        })
+      });
+      if (!response.ok) throw new Error("reason generation failed");
+      const data = await response.json();
+      (data.results || []).forEach((row) => {
+        const transaction = state.transactions[row.index];
+        if (transaction && row.reason) {
+          transaction.reason = cleanText(row.reason);
+        }
+      });
+    }
+  } catch {
+    missing.forEach(({ transaction }) => {
+      transaction.reason = fallbackPreTradeReason(transaction);
+    });
+    setStatus("Gemini reason generation failed; fallback reason text was used.", true);
+  }
+}
+
+function getPreTradeReasonsApiUrl() {
+  return window.location.pathname.startsWith("/RO_transaction/")
+    ? "/RO_transaction/api/pretrade-reasons"
+    : "/api/pretrade-reasons";
+}
+
+function fallbackPreTradeReason(transaction) {
+  const action = normalizeReportTradeType(transaction.type);
+  const security = transaction.security || "the security";
+  const price = formatMoney(transaction.price, transaction.ccy);
+  const quantity = transaction.qty || "the proposed quantity";
+  return `The proposed ${action} transaction in ${security} is recorded for pre-trade review based on the submitted order details, including proposed price ${price} and quantity ${quantity}. The portfolio manager should confirm that the transaction is consistent with the fund mandate, investment restrictions, and execution requirements before the order is released.`;
+}
+
+function drawProfessionalPreTradePage(doc, context) {
+  const margin = 42;
+  const width = doc.internal.pageSize.getWidth() - margin * 2;
+  const transaction = context.transaction;
+  let y = drawProfessionalTitle(doc, "Transaction Pre-Trade Record", margin, 36, width);
+
+  y = drawPdfKeyValueGrid(doc, [
+    ["Fund Portfolio Manager:", els.pmNameInput.value.trim()],
+    ["Fund Name:", context.company],
+    ["Stock code:", transaction.security || ""],
+    ["Date:", formatDisplayTradeDate(context.tradeDate)]
+  ], margin, y + 12, width, { columns: 2 });
+
+  y = drawPdfSectionBand(doc, "Details", margin, y + 14, width);
+  y = drawPdfKeyValueGrid(doc, [
+    ["Type of Transaction:", normalizeReportTradeType(transaction.type)],
+    ["Proposed Price:", formatMoney(transaction.price, transaction.ccy)],
+    ["Proposed Quantity:", transaction.qty || ""]
+  ], margin, y, width, { columns: 1 });
+
+  y = drawPdfSectionBand(doc, "Investment Supporting", margin, y + 14, width);
+  y = drawPdfReasonBox(doc, transaction.reason || fallbackPreTradeReason(transaction), margin, y, width);
+
+  y = drawPdfSignerRow(doc, "Signed By PM:", els.pmNameInput.value.trim(), state.pmSignature, margin, y + 16, width);
+  y = drawPdfStatementBox(
+    doc,
+    "I confirm that this investment has gone through pre-trade checks, does not exceed the fund's investment scope, does not violate any investment restrictions, and has taken climate impact into account as a risk factor.",
+    margin,
+    y + 10,
+    width
+  );
+  drawPdfSignerRow(doc, "Checked By:", els.checkedByNameInput.value.trim(), state.checkedBySignature, margin, y + 16, width);
+}
+
+function drawProfessionalPostTradeReport(doc, context) {
+  const margin = 28;
+  const width = doc.internal.pageSize.getWidth() - margin * 2;
+  let y = drawProfessionalTitle(doc, "Transaction Post-Trade Record", margin, 26, width);
+
+  y = drawPdfKeyValueGrid(doc, [
+    ["Fund Name:", context.company],
+    ["Dealing Account:", context.company],
+    ["Trade Date:", formatDisplayTradeDate(context.tradeDate)]
+  ], margin, y + 10, width, { columns: 1, rowHeight: 22 });
+
+  y = drawPdfSectionBand(doc, "Transaction records are fully displayed in the attached schedule.", margin, y + 12, width);
+  const body = context.rows.map(({ transaction }) => FIELDS.map((field) => transaction[field.key] ?? ""));
+  doc.autoTable({
+    startY: y + 8,
+    head: [FIELDS.map((field) => field.pdf)],
+    body,
+    margin: { left: margin, right: margin },
+    tableWidth: width,
+    theme: "grid",
+    styles: {
+      font: "helvetica",
+      fontSize: 7,
+      cellPadding: 2.4,
+      lineColor: [207, 213, 221],
+      lineWidth: 0.5,
+      overflow: "linebreak",
+      valign: "middle"
+    },
+    headStyles: {
+      fillColor: [31, 41, 55],
+      textColor: [255, 255, 255],
+      fontStyle: "bold",
+      halign: "center"
+    },
+    columnStyles: {
+      0: { cellWidth: 50 },
+      1: { cellWidth: 50 },
+      2: { cellWidth: 56 },
+      3: { cellWidth: 82 },
+      4: { cellWidth: 116 },
+      5: { cellWidth: 44, halign: "right" },
+      6: { cellWidth: 58, halign: "right" },
+      7: { cellWidth: 28 },
+      8: { cellWidth: 66, halign: "right" },
+      9: { cellWidth: 42, halign: "right" },
+      10: { cellWidth: 56, halign: "right" },
+      11: { cellWidth: 88 },
+      12: { cellWidth: 60, halign: "right" }
+    },
+    didParseCell(data) {
+      if (data.section === "body" && containsCjk(data.cell.raw)) {
+        reserveCjkCellHeight(data);
+        data.cell.text = [""];
+      }
+      if (data.section === "body" && [8, 10].includes(data.column.index)) {
+        const text = Array.isArray(data.cell.text) ? data.cell.text.join("") : String(data.cell.text || "");
+        if (text.includes("(") || text.trim().startsWith("-")) {
+          data.cell.styles.textColor = [220, 38, 38];
+        }
+      }
+    },
+    didDrawCell(data) {
+      if (data.section === "body" && containsCjk(data.cell.raw)) {
+        drawCjkCellText(doc, String(data.cell.raw ?? ""), data.cell, data.cell.styles);
+      }
+    }
+  });
+
+  y = Math.min((doc.lastAutoTable?.finalY || 320) + 18, doc.internal.pageSize.getHeight() - 128);
+  y = drawPdfSignerRow(doc, "Signed By Trader:", els.executedNameInput.value.trim(), state.executedSignature, margin, y, width);
+  y = drawPdfStatementBox(doc, "No executed trade in the transaction record has breached the trading instruction.", margin, y + 8, width);
+  y = drawPdfSignerRow(doc, "Confirmed By PM:", els.pmNameInput.value.trim(), state.pmSignature, margin, y + 10, width);
+  y = drawPdfSectionBand(doc, "Conclusion:", margin, y + 10, width);
+  y = drawPdfBullets(doc, [
+    "No connected-party transactions were identified.",
+    "All trades were executed fairly and on the best available terms.",
+    "Any conflicts of interest have been disclosed to investors where applicable.",
+    "Executed trades are within the fund's investment scope.",
+    "No cross trades were identified."
+  ], margin, y + 8, width);
+  drawPdfSignerRow(doc, "Approved By RO:", els.roNameInput.value.trim(), state.roSignature, margin, y + 10, width);
+}
+
+function drawProfessionalTitle(doc, title, x, y, width) {
+  doc.setFillColor(31, 41, 55);
+  doc.rect(x, y, width, 32, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(15);
+  doc.text(title, x + width / 2, y + 21, { align: "center" });
+  doc.setTextColor(17, 24, 39);
+  return y + 38;
+}
+
+function drawPdfSectionBand(doc, text, x, y, width) {
+  doc.setFillColor(229, 231, 235);
+  doc.setDrawColor(154, 164, 178);
+  doc.rect(x, y, width, 22, "FD");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(17, 24, 39);
+  doc.text(text, x + 8, y + 15);
+  return y + 22;
+}
+
+function drawPdfKeyValueGrid(doc, rows, x, y, width, options = {}) {
+  const columns = options.columns || 1;
+  const rowHeight = options.rowHeight || 28;
+  const labelWidth = columns === 2 ? 130 : 150;
+  const colWidth = width / columns;
+  doc.setFontSize(9.5);
+  rows.forEach((row, index) => {
+    const rowIndex = Math.floor(index / columns);
+    const colIndex = index % columns;
+    const cellX = x + colIndex * colWidth;
+    const cellY = y + rowIndex * rowHeight;
+    doc.setDrawColor(154, 164, 178);
+    doc.rect(cellX, cellY, colWidth, rowHeight);
+    doc.setFillColor(243, 244, 246);
+    doc.rect(cellX, cellY, labelWidth, rowHeight, "F");
+    doc.setFont("helvetica", "bold");
+    doc.text(row[0], cellX + 6, cellY + 18);
+    doc.setFont("helvetica", "normal");
+    doc.text(fitPdfText(doc, row[1] || "", colWidth - labelWidth - 12), cellX + labelWidth + 6, cellY + 18);
+  });
+  return y + Math.ceil(rows.length / columns) * rowHeight;
+}
+
+function drawPdfReasonBox(doc, reason, x, y, width) {
+  const lines = doc.splitTextToSize(reason, width - 20);
+  const height = Math.max(90, lines.length * 13 + 24);
+  doc.setDrawColor(154, 164, 178);
+  doc.rect(x, y, width, height);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text("Reason:", x + 8, y + 18);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  doc.text(lines, x + 8, y + 36);
+  return y + height;
+}
+
+function drawPdfSignerRow(doc, label, name, signature, x, y, width) {
+  const rowHeight = 44;
+  const labelWidth = 130;
+  const nameWidth = 180;
+  doc.setDrawColor(154, 164, 178);
+  doc.rect(x, y, width, rowHeight);
+  doc.line(x + labelWidth, y, x + labelWidth, y + rowHeight);
+  doc.line(x + labelWidth + nameWidth, y, x + labelWidth + nameWidth, y + rowHeight);
+  doc.setFillColor(243, 244, 246);
+  doc.rect(x, y, labelWidth, rowHeight, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9.5);
+  doc.text(label, x + 6, y + 26);
+  doc.setFont("helvetica", "normal");
+  doc.text(name || "", x + labelWidth + 6, y + 26);
+  addSignatureImage(doc, signature, x + labelWidth + nameWidth + 10, y + 6, width - labelWidth - nameWidth - 20, rowHeight - 12);
+  return y + rowHeight;
+}
+
+function drawPdfStatementBox(doc, text, x, y, width) {
+  const lines = doc.splitTextToSize(text, width - 18);
+  const height = Math.max(38, lines.length * 13 + 18);
+  doc.setDrawColor(154, 164, 178);
+  doc.rect(x, y, width, height);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  doc.text(lines, x + 8, y + 18);
+  return y + height;
+}
+
+function drawPdfBullets(doc, items, x, y, width) {
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.3);
+  items.forEach((item) => {
+    const lines = doc.splitTextToSize(item, width - 26);
+    doc.text("-", x + 8, y);
+    doc.text(lines, x + 20, y);
+    y += Math.max(14, lines.length * 12);
+  });
+  return y;
+}
+
+function buildDailyWordReportFiles() {
+  const company = getConfiguredFundName();
+  return getTransactionGroups().flatMap((group) => {
+    return [
+      {
+        name: buildDailyReportFilename(company, group.tradeDate, "Pre-Trade", "docx"),
+        data: buildPreTradeDocxBytes({ company, tradeDate: group.tradeDate, rows: group.rows })
+      },
+      {
+        name: buildDailyReportFilename(company, group.tradeDate, "Post-Trade", "docx"),
+        data: buildPostTradeDocxBytes({ company, tradeDate: group.tradeDate, rows: group.rows })
+      }
+    ];
+  });
+}
+
+function buildPreTradeDocxBytes(context) {
+  const docx = { images: [] };
+  const pages = context.rows.map(({ transaction }) => [
+    docxTitle("Transaction Pre-Trade Record"),
+    docxKeyValueTable([
+      ["Fund Portfolio Manager:", els.pmNameInput.value.trim()],
+      ["Fund Name:", context.company],
+      ["Stock code:", transaction.security || ""],
+      ["Date:", formatDisplayTradeDate(context.tradeDate)]
+    ], 10460),
+    docxSectionBand("Details"),
+    docxKeyValueTable([
+      ["Type of Transaction:", normalizeReportTradeType(transaction.type)],
+      ["Proposed Price:", formatMoney(transaction.price, transaction.ccy)],
+      ["Proposed Quantity:", transaction.qty || ""]
+    ], 10460),
+    docxSectionBand("Investment Supporting"),
+    docxTable([[{ text: `Reason:\n${transaction.reason || fallbackPreTradeReason(transaction)}`, boldFirstLine: true }]], [10460]),
+    docxSignerTable("Signed By PM:", els.pmNameInput.value.trim(), state.pmSignature, docx, 10460),
+    docxTable([["I confirm that this investment has gone through pre-trade checks, does not exceed the fund's investment scope, does not violate any investment restrictions, and has taken climate impact into account as a risk factor."]], [10460]),
+    docxSignerTable("Checked By:", els.checkedByNameInput.value.trim(), state.checkedBySignature, docx, 10460)
+  ].join("")).join(docxPageBreak());
+
+  return createDocxPackage(docxDocumentXml(pages, { landscape: false }), docx.images);
+}
+
+function buildPostTradeDocxBytes(context) {
+  const docx = { images: [] };
+  const rows = [
+    FIELDS.map((field) => ({ text: field.pdf, fill: "1F2937", color: "FFFFFF", bold: true, align: "center", size: 14 })),
+    ...context.rows.map(({ transaction }) => FIELDS.map((field) => ({
+      text: transaction[field.key] ?? "",
+      size: 13,
+      align: field.numeric ? "right" : "left",
+      color: field.numeric && isNegative(transaction[field.key]) ? "DC2626" : "111827"
+    })))
+  ];
+  const body = [
+    docxTitle("Transaction Post-Trade Record"),
+    docxKeyValueTable([
+      ["Fund Name:", context.company],
+      ["Dealing Account:", context.company],
+      ["Trade Date:", formatDisplayTradeDate(context.tradeDate)]
+    ], 15398),
+    docxSectionBand("Transaction records are fully displayed in the attached schedule."),
+    docxTable(rows, [900, 900, 1050, 1500, 2600, 900, 1100, 650, 1300, 800, 1100, 1700, 898]),
+    docxSignerTable("Signed By Trader:", els.executedNameInput.value.trim(), state.executedSignature, docx, 15398),
+    docxTable([["No executed trade in the transaction record has breached the trading instruction."]], [15398]),
+    docxSignerTable("Confirmed By PM:", els.pmNameInput.value.trim(), state.pmSignature, docx, 15398),
+    docxSectionBand("Conclusion:"),
+    docxBulletList([
+      "No connected-party transactions were identified.",
+      "All trades were executed fairly and on the best available terms.",
+      "Any conflicts of interest have been disclosed to investors where applicable.",
+      "Executed trades are within the fund's investment scope.",
+      "No cross trades were identified."
+    ]),
+    docxSignerTable("Approved By RO:", els.roNameInput.value.trim(), state.roSignature, docx, 15398)
+  ].join("");
+
+  return createDocxPackage(docxDocumentXml(body, { landscape: true }), docx.images);
+}
+
+function docxDocumentXml(body, options) {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body>${body}${docxSectionProperties(options)}</w:body></w:document>`;
+}
+
+function docxSectionProperties(options = {}) {
+  const landscape = Boolean(options.landscape);
+  const width = landscape ? 16838 : 11906;
+  const height = landscape ? 11906 : 16838;
+  return `<w:sectPr><w:pgSz w:w="${width}" w:h="${height}"${landscape ? ' w:orient="landscape"' : ""}/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr>`;
+}
+
+function docxTitle(text) {
+  return docxParagraph(text, { align: "center", bold: true, size: 32, color: "FFFFFF", fill: "1F2937", after: 180 });
+}
+
+function docxSectionBand(text) {
+  return docxParagraph(text, { bold: true, size: 20, fill: "E5E7EB", before: 160, after: 80 });
+}
+
+function docxKeyValueTable(rows, totalWidth) {
+  return docxTable(rows.map(([label, value]) => [
+    { text: label, fill: "F3F4F6", bold: true },
+    { text: value || "" }
+  ]), [Math.round(totalWidth * 0.28), Math.round(totalWidth * 0.72)]);
+}
+
+function docxSignerTable(label, name, signature, context, totalWidth) {
+  const labelWidth = Math.round(totalWidth * 0.22);
+  const nameWidth = Math.round(totalWidth * 0.28);
+  const signatureWidth = totalWidth - labelWidth - nameWidth;
+  return docxTable([[
+    { text: label, fill: "F3F4F6", bold: true },
+    { text: name || "" },
+    { raw: docxImageParagraph(signature, context) }
+  ]], [labelWidth, nameWidth, signatureWidth]);
+}
+
+function docxBulletList(items) {
+  return items.map((item) => docxParagraph(`- ${item}`, { indent: 360, hanging: 180 })).join("");
+}
+
+function docxPageBreak() {
+  return '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+}
+
+function docxTable(rows, widths) {
+  const grid = widths.map((width) => `<w:gridCol w:w="${width}"/>`).join("");
+  const body = rows.map((row) => `<w:tr>${row.map((cell, index) => docxCell(cell, widths[index] || widths[0])).join("")}</w:tr>`).join("");
+  return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="6" w:color="9AA4B2"/><w:left w:val="single" w:sz="6" w:color="9AA4B2"/><w:bottom w:val="single" w:sz="6" w:color="9AA4B2"/><w:right w:val="single" w:sz="6" w:color="9AA4B2"/><w:insideH w:val="single" w:sz="6" w:color="9AA4B2"/><w:insideV w:val="single" w:sz="6" w:color="9AA4B2"/></w:tblBorders><w:tblCellMar><w:top w:w="90" w:type="dxa"/><w:left w:w="90" w:type="dxa"/><w:bottom w:w="90" w:type="dxa"/><w:right w:w="90" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>${grid}</w:tblGrid>${body}</w:tbl>`;
+}
+
+function docxCell(cell, width) {
+  const data = typeof cell === "object" && cell !== null ? cell : { text: cell };
+  const fill = data.fill ? `<w:shd w:fill="${data.fill}"/>` : "";
+  const content = data.raw !== undefined ? (data.raw || docxParagraph("")) : docxParagraph(data.text || "", data);
+  return `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/><w:vAlign w:val="center"/>${fill}</w:tcPr>${content}</w:tc>`;
+}
+
+function docxParagraph(text, options = {}) {
+  const props = [
+    options.align ? `<w:jc w:val="${options.align}"/>` : "",
+    options.fill ? `<w:shd w:fill="${options.fill}"/>` : "",
+    options.before || options.after ? `<w:spacing w:before="${options.before || 0}" w:after="${options.after || 0}"/>` : "",
+    options.indent || options.hanging ? `<w:ind w:left="${options.indent || 0}" w:hanging="${options.hanging || 0}"/>` : ""
+  ].join("");
+  const lines = String(text ?? "").split(/\r?\n/);
+  const runs = lines.map((line, index) => {
+    const runProps = docxRunProperties({ ...options, bold: options.bold || (options.boldFirstLine && index === 0) });
+    return `<w:r>${runProps}${index ? "<w:br/>" : ""}<w:t xml:space="preserve">${xmlEscape(line)}</w:t></w:r>`;
+  }).join("");
+  return `<w:p>${props ? `<w:pPr>${props}</w:pPr>` : ""}${runs}</w:p>`;
+}
+
+function docxRunProperties(options = {}) {
+  const bold = options.bold ? "<w:b/>" : "";
+  const size = options.size ? `<w:sz w:val="${options.size}"/>` : '<w:sz w:val="18"/>';
+  const color = options.color ? `<w:color w:val="${options.color}"/>` : "";
+  return `<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Microsoft JhengHei"/>${bold}${size}${color}</w:rPr>`;
+}
+
+function docxImageParagraph(dataUrl, context) {
+  const image = parseSignatureImage(dataUrl);
+  if (!image) return docxParagraph("");
+  const imageIndex = context.images.length + 1;
+  const relationshipId = `rId${imageIndex}`;
+  const filename = `signature-${imageIndex}.${image.extension}`;
+  const extent = containImageExtent(image.width, image.height, 1828800, 411480);
+  context.images.push({ relationshipId, filename, data: image.bytes, contentType: image.contentType });
+  return `<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${extent.cx}" cy="${extent.cy}"/><wp:docPr id="${imageIndex}" name="${xmlEscape(filename)}"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="${imageIndex}" name="${xmlEscape(filename)}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${relationshipId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${extent.cx}" cy="${extent.cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`;
+}
+
+function parseSignatureImage(dataUrl) {
+  const match = String(dataUrl || "").match(/^data:(image\/png|image\/jpe?g);base64,(.+)$/i);
+  if (!match) return null;
+  const contentType = match[1].toLowerCase() === "image/jpg" ? "image/jpeg" : match[1].toLowerCase();
+  const binary = atob(match[2]);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  const size = getImagePixelSize(bytes, contentType);
+  return {
+    bytes,
+    contentType,
+    extension: contentType === "image/png" ? "png" : "jpg",
+    width: size.width,
+    height: size.height
+  };
+}
+
+function getImagePixelSize(bytes, contentType) {
+  if (contentType === "image/png" && bytes.length >= 24) {
+    return {
+      width: readUint32Be(bytes, 16) || 600,
+      height: readUint32Be(bytes, 20) || 180
+    };
+  }
+  if (contentType === "image/jpeg") {
+    for (let index = 2; index < bytes.length - 9;) {
+      if (bytes[index] !== 0xff) break;
+      const marker = bytes[index + 1];
+      const length = (bytes[index + 2] << 8) + bytes[index + 3];
+      if (marker >= 0xc0 && marker <= 0xc3) {
+        return {
+          height: (bytes[index + 5] << 8) + bytes[index + 6],
+          width: (bytes[index + 7] << 8) + bytes[index + 8]
+        };
+      }
+      index += Math.max(length + 2, 2);
+    }
+  }
+  return { width: 600, height: 180 };
+}
+
+function readUint32Be(bytes, offset) {
+  return ((bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3]) >>> 0;
+}
+
+function containImageExtent(width, height, maxCx, maxCy) {
+  const safeWidth = Math.max(1, Number(width) || 1);
+  const safeHeight = Math.max(1, Number(height) || 1);
+  const scale = Math.min(maxCx / safeWidth, maxCy / safeHeight);
+  return {
+    cx: Math.round(safeWidth * scale),
+    cy: Math.round(safeHeight * scale)
+  };
+}
+
+function createDocxPackage(documentXml, images) {
+  const encoder = new TextEncoder();
+  const files = [
+    { name: "[Content_Types].xml", data: encoder.encode(docxContentTypes(images)) },
+    { name: "_rels/.rels", data: encoder.encode(docxRootRels()) },
+    { name: "word/document.xml", data: encoder.encode(documentXml) },
+    { name: "word/_rels/document.xml.rels", data: encoder.encode(docxDocumentRels(images)) },
+    ...images.map((image) => ({ name: `word/media/${image.filename}`, data: image.data }))
+  ];
+  return createZipBytes(files);
+}
+
+function docxContentTypes(images) {
+  const defaults = new Set(images.map((image) => image.contentType === "image/png" ? '<Default Extension="png" ContentType="image/png"/>' : '<Default Extension="jpg" ContentType="image/jpeg"/>'));
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${Array.from(defaults).join("")}<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`;
+}
+
+function docxRootRels() {
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>';
+}
+
+function docxDocumentRels(images) {
+  const rels = images.map((image) => `<Relationship Id="${image.relationshipId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${xmlEscape(image.filename)}"/>`).join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels}</Relationships>`;
+}
+
+function xmlEscape(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function normalizeReportTradeType(value) {
+  const text = cleanText(value);
+  const lower = text.toLowerCase();
+  if (lower.includes("buy")) return "BUY";
+  if (lower.includes("sell") || lower === "ss" || lower === "sh") return "SELL";
+  return text.toUpperCase();
+}
+
+function formatMoney(price, ccy) {
+  const currency = cleanText(ccy) || "USD";
+  const text = cleanText(price);
+  if (!text) return currency;
+  const number = Number(text.replace(/,/g, ""));
+  const value = Number.isFinite(number) ? number.toFixed(4).replace(/\.?0+$/, "") : text;
+  return `${currency} ${value}`;
 }
 
 function sanitizeFilenamePart(value) {
@@ -859,6 +1477,10 @@ function downloadBlob(blob, filename) {
 }
 
 function createZipBlob(files) {
+  return new Blob([createZipBytes(files)], { type: "application/zip" });
+}
+
+function createZipBytes(files) {
   const localParts = [];
   const centralParts = [];
   const encoder = new TextEncoder();
@@ -923,7 +1545,15 @@ function createZipBlob(files) {
   endView.setUint32(16, offset, true);
   endView.setUint16(20, 0, true);
 
-  return new Blob([...localParts, ...centralParts, endHeader], { type: "application/zip" });
+  const parts = [...localParts, ...centralParts, endHeader];
+  const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
+  const output = new Uint8Array(totalLength);
+  let cursor = 0;
+  parts.forEach((part) => {
+    output.set(part, cursor);
+    cursor += part.length;
+  });
+  return output;
 }
 
 function getDosDateTime(date) {
