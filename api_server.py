@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import math
 import os
 import re
 import ssl
 import sys
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -23,6 +25,9 @@ ENV_PATHS = (
     "/etc/ro-transaction.env",
     os.path.join(os.path.dirname(__file__), ".env"),
 )
+PRETRADE_CONTEXT_WORKERS = 6
+_PRETRADE_CONTEXT_CACHE: dict[tuple[str, str], dict] = {}
+_PRETRADE_CONTEXT_CACHE_LOCK = threading.Lock()
 
 
 def load_env() -> dict[str, str]:
@@ -298,6 +303,113 @@ def build_facts(transaction: dict, fmp_api_key: str, kind: str = "stock", underl
         "kind": "stock",
         "technicalDataAvailableBeforeTradeDate": technicals,
     }
+
+
+def compact_text(value, max_length: int = 500) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) <= max_length:
+        return text
+    return f"{text[: max_length - 3].rstrip()}..."
+
+
+def build_pretrade_stock_context(item: dict, fmp_api_key: str) -> dict:
+    symbol = parse_symbol(item.get("security", ""))
+    if not symbol:
+        return {}
+    trade_dt = parse_trade_date(item.get("tradeDate", ""))
+    data_cutoff_date = (trade_dt - timedelta(days=1)).strftime("%Y-%m-%d")
+    cache_key = (symbol, data_cutoff_date)
+    with _PRETRADE_CONTEXT_CACHE_LOCK:
+        cached = _PRETRADE_CONTEXT_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    facts = build_facts(
+        {
+            "security": item.get("security"),
+            "description": item.get("description"),
+            "tradeDate": item.get("tradeDate"),
+            "price": item.get("price"),
+            "ccy": item.get("ccy"),
+            "type": item.get("type"),
+            "qty": item.get("qty"),
+            "counterpart": item.get("counterpart"),
+        },
+        fmp_api_key,
+    )
+    business = facts.get("business") or {}
+    fundamental = facts.get("fundamentalDataAvailableBeforeTradeDate") or {}
+    technical = facts.get("technicalDataAvailableBeforeTradeDate") or {}
+
+    latest_quarter = {}
+    if fundamental.get("latestQuarter"):
+        latest_quarter = {
+            "period": fundamental.get("latestQuarter"),
+            "filingDate": fundamental.get("filingDate"),
+            "revenueYoYPct": fundamental.get("revenueYoYPct"),
+            "grossProfitYoYPct": fundamental.get("grossProfitYoYPct"),
+            "netIncome": fundamental.get("netIncome"),
+            "priorYearSameQuarterNetIncome": fundamental.get("priorYearSameQuarterNetIncome"),
+            "grossMarginPct": fundamental.get("latestGrossMarginPct"),
+            "operatingMarginPct": fundamental.get("latestOperatingMarginPct"),
+            "netMarginPct": fundamental.get("latestNetMarginPct"),
+        }
+
+    context = {
+        "company": facts.get("trade", {}).get("company") or item.get("description") or symbol,
+        "symbol": symbol,
+        "dataCutoffDate": data_cutoff_date,
+        "sector": business.get("sector"),
+        "industry": business.get("industry"),
+        "businessDescription": compact_text(business.get("description")),
+        "latestFiledQuarter": latest_quarter or None,
+        "preTradeMarketData": {
+            "asOfDate": technical.get("date"),
+            "closeVsSma20Pct": technical.get("closeVsSma20Pct"),
+            "closeVsSma50Pct": technical.get("closeVsSma50Pct"),
+            "rsi14": technical.get("rsi14"),
+            "volumeVs20DayAvgPct": technical.get("volumeVs20DayAvgPct"),
+        },
+    }
+    with _PRETRADE_CONTEXT_CACHE_LOCK:
+        _PRETRADE_CONTEXT_CACHE[cache_key] = context
+    return context
+
+
+def enrich_pretrade_reason_items(items: list[dict], fmp_api_key: str) -> list[dict]:
+    enriched = [dict(item) for item in items]
+    if not fmp_api_key:
+        return enriched
+
+    grouped: dict[tuple[str, str], list[int]] = {}
+    for position, item in enumerate(enriched):
+        if str(item.get("kind", "")).lower() != "stock" or not is_open_position_type(item.get("type", "")):
+            continue
+        key = (parse_symbol(item.get("security", "")), str(item.get("tradeDate", "")))
+        if key[0] and key[1]:
+            grouped.setdefault(key, []).append(position)
+
+    if not grouped:
+        return enriched
+
+    workers = min(PRETRADE_CONTEXT_WORKERS, len(grouped))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(build_pretrade_stock_context, enriched[positions[0]], fmp_api_key): positions
+            for positions in grouped.values()
+        }
+        for future in as_completed(futures):
+            positions = futures[future]
+            try:
+                context = future.result()
+            except Exception as exc:
+                security = enriched[positions[0]].get("security", "unknown security")
+                print(f"Pre-trade stock context unavailable for {security}: {exc}", file=sys.stderr)
+                continue
+            if context:
+                for position in positions:
+                    enriched[position]["stockContext"] = context
+    return enriched
 
 
 # Index futures rarely return EOD data under their own/root symbol on FMP.
@@ -627,6 +739,7 @@ def generate_pretrade_reasons(items: list[dict], gemini_api_key: str) -> list[di
             "gross": str(item.get("gross", "")),
             "counterpart": str(item.get("counterpart", "")),
             "kind": str(item.get("kind", "")),
+            "stockContext": item.get("stockContext") or None,
         }
         for index, item in enumerate(items)
     ]
@@ -650,15 +763,18 @@ def generate_pretrade_reasons(items: list[dict], gemini_api_key: str) -> list[di
     prompt = (
         "You are preparing concise English pre-trade support text for internal fund compliance records.\n"
         "For each transaction, write 2-4 professional sentences explaining why the proposed trade can be considered for pre-trade review.\n"
-        "Use only the provided fields. Do not mention data vendors, analyst ratings, price targets, or unprovided news.\n"
+        "Use only the transaction fields and stockContext supplied in Data JSON. Do not mention data vendors, analyst ratings, price targets, or unprovided news.\n"
         "Keep the wording neutral: this is not investment advice and not a recommendation to outside investors.\n"
         "Write in the first person as the fund portfolio manager, using clear, natural, professional English. Use conversational wording such as 'I plan to' or 'I intend to', and never refer to the portfolio manager or trader in the third person.\n"
         "Avoid robotic compliance-template language. Never expose JSON field names such as proposedPriceRange; write 'proposed price range' instead.\n"
-        "Do not introduce any event, market movement, result, technical indicator, or circumstance that is not contained in the provided data and known before the trade date.\n"
+        "stockContext contains company information and financial or market data available by its dataCutoffDate, which is before the trade date. Do not introduce any event, market movement, result, technical indicator, or circumstance that is not contained in that context.\n"
         "Use BUY and SELL as the financial transaction terms. Never use the noun 'sale'.\n"
         "Treat every quantity as an absolute positive quantity and never print a negative quantity.\n"
         "When mentioning price, use only the provided proposedPriceRange; do not state a single exact price or add percentage-range wording.\n"
-        "For buy/open trades, focus on intended portfolio exposure or strategy implementation.\n"
+        "For each open stock trade with stockContext, mention the company or symbol and include one concise company-specific reason supported by its business, latest filed financials, or pre-trade market trend. Prefer the most decision-useful fact and do not overload the paragraph with figures.\n"
+        "For BUY/open stock trades, explain naturally why I want to add or increase this company in the fund's portfolio. For SELL/open stock trades, explain why I want to establish short exposure, but only state weakness when stockContext supports it.\n"
+        "Do not write vague claims such as 'the market is optimistic' unless the supplied pre-trade market data supports the statement. Do not claim that earnings are imminent or expected to beat unless an explicit pre-trade earnings fact is supplied.\n"
+        "If stockContext is unavailable, identify the company from description/security and state the intended portfolio role without inventing company facts.\n"
         "For sell/close trades, focus on risk control, rebalancing, exit, or exposure reduction when supported by the type.\n"
         "For futures/options, describe hedging, exposure management, roll, or tactical implementation only when consistent with the transaction fields.\n\n"
         f"Data JSON:\n{json.dumps(rows, ensure_ascii=False)}"
@@ -775,7 +891,8 @@ class Handler(BaseHTTPRequestHandler):
             env = load_env()
             if not env.get("GEMINI_API_KEY"):
                 raise RuntimeError("Server API keys are not configured.")
-            results = generate_pretrade_reasons(items, env["GEMINI_API_KEY"])
+            enriched_items = enrich_pretrade_reason_items(items, env.get("FMP_API_KEY", ""))
+            results = generate_pretrade_reasons(enriched_items, env["GEMINI_API_KEY"])
             json_response(self, 200, {"results": results})
         except (ValueError, RuntimeError) as exc:
             json_response(self, 400, {"error": str(exc)})

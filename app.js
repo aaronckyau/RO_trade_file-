@@ -1081,6 +1081,7 @@ async function ensurePreTradeReasonsFor(candidates) {
             security: transaction.security,
             description: transaction.description,
             qty: formatReportQuantity(transaction.qty),
+            price: transaction.price,
             proposedPriceRange: formatProposedPriceRange(transaction.price, transaction.ccy),
             ccy: transaction.ccy,
             gross: transaction.gross,
@@ -1118,9 +1119,14 @@ function fallbackPreTradeReason(transaction) {
 
   const action = normalizeReportTradeType(transaction.type);
   const security = transaction.security || "the security";
+  const company = cleanText(transaction.description);
+  const positionName = company && company !== security ? `${company} (${security})` : security;
   const priceRange = formatProposedPriceRange(transaction.price, transaction.ccy);
   const quantity = formatReportQuantityWithUnit(transaction);
-  return `I plan to ${action} ${quantity} of ${security} within the proposed price range of ${priceRange} as part of the fund's current strategy and to adjust portfolio exposure. Before I release the order, I will confirm that it is consistent with the fund mandate, investment restrictions, and execution requirements.`;
+  if (action === "BUY") {
+    return `I plan to BUY ${quantity} of ${security} to add ${positionName} to the fund's portfolio and gain targeted exposure to the company's future performance. I will work within the proposed price range of ${priceRange} and confirm mandate compliance, liquidity, and best execution before releasing the order.`;
+  }
+  return `I plan to SELL ${quantity} of ${security} to establish short exposure to ${positionName} as part of the fund's current strategy. I will work within the proposed price range of ${priceRange} and confirm the investment rationale, risk limits, liquidity, and best execution before releasing the order.`;
 }
 
 function buildClosePositionReason(transaction) {
