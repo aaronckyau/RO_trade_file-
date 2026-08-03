@@ -136,13 +136,16 @@ def latest_before(rows: list[dict], cutoff_date: str) -> dict | None:
     return filtered[0][1] if filtered else None
 
 
-def same_quarter_prior_year(rows: list[dict], latest: dict) -> dict | None:
+def same_quarter_prior_year(rows: list[dict], latest: dict, cutoff_date: str = "") -> dict | None:
     try:
         target_year = str(int(str(latest.get("date", ""))[:4]) - 1)
     except ValueError:
         return None
     period = latest.get("period")
     for row in rows:
+        marker = str(row.get("filingDate") or row.get("date") or "")
+        if cutoff_date and (not marker or marker > cutoff_date):
+            continue
         if str(row.get("date", "")).startswith(target_year) and row.get("period") == period:
             return row
     return None
@@ -251,7 +254,7 @@ def build_facts(transaction: dict, fmp_api_key: str, kind: str = "stock", underl
     profile = profile_rows[0] if profile_rows else {}
     income_rows = fmp_get("income-statement", {"symbol": symbol, "period": "quarter", "limit": "12"}, fmp_api_key)
     latest = latest_before(income_rows, data_cutoff_date) or {}
-    prior = same_quarter_prior_year(income_rows, latest) if latest else None
+    prior = same_quarter_prior_year(income_rows, latest, data_cutoff_date) if latest else None
     from_date = (trade_dt - timedelta(days=460)).strftime("%Y-%m-%d")
     history = fmp_get("historical-price-eod/full", {"symbol": symbol, "from": from_date, "to": data_cutoff_date}, fmp_api_key)
     technicals = compute_technicals(history, data_cutoff_date, trade_price)
@@ -305,11 +308,118 @@ def build_facts(transaction: dict, fmp_api_key: str, kind: str = "stock", underl
     }
 
 
-def compact_text(value, max_length: int = 500) -> str:
-    text = re.sub(r"\s+", " ", str(value or "")).strip()
-    if len(text) <= max_length:
-        return text
-    return f"{text[: max_length - 3].rstrip()}..."
+def optional_float(value) -> float | None:
+    if value is None or str(value).strip() == "":
+        return None
+    number = as_float(value, math.nan)
+    return number if math.isfinite(number) else None
+
+
+def is_evidence_date_allowed(value: str, cutoff_date: str) -> bool:
+    try:
+        evidence_date = datetime.strptime(str(value), "%Y-%m-%d")
+        cutoff = datetime.strptime(str(cutoff_date), "%Y-%m-%d")
+    except ValueError:
+        return False
+    return evidence_date <= cutoff
+
+
+def evidence_date(evidence: dict) -> str:
+    return str(evidence.get("filingDate") or evidence.get("asOfDate") or "")
+
+
+def filter_locked_evidence(evidence_rows: list[dict], cutoff_date: str) -> list[dict]:
+    locked = []
+    seen_ids = set()
+    for row in evidence_rows:
+        evidence_id = str(row.get("id", "")).strip()
+        statement = str(row.get("statement", "")).strip()
+        marker = evidence_date(row)
+        if not evidence_id or evidence_id in seen_ids or not statement:
+            continue
+        if not is_evidence_date_allowed(marker, cutoff_date):
+            continue
+        seen_ids.add(evidence_id)
+        locked.append({**row, "id": evidence_id, "statement": statement})
+    return locked
+
+
+def build_pretrade_evidence(fundamental: dict, technical: dict, cutoff_date: str) -> list[dict]:
+    evidence = []
+    filing_date = str(fundamental.get("filingDate") or "")
+    if is_evidence_date_allowed(filing_date, cutoff_date):
+        revenue_yoy = optional_float(fundamental.get("revenueYoYPct"))
+        if revenue_yoy is not None:
+            direction = "increased" if revenue_yoy >= 0 else "decreased"
+            evidence.append({
+                "id": "fundamental_revenue_yoy",
+                "kind": "fundamental",
+                "stance": "positive" if revenue_yoy > 0 else "negative" if revenue_yoy < 0 else "neutral",
+                "filingDate": filing_date,
+                "statement": (
+                    f"The latest quarterly results filed on {filing_date} showed revenue "
+                    f"{direction} {abs(revenue_yoy):.1f}% year over year."
+                ),
+            })
+
+        net_income = optional_float(fundamental.get("netIncome"))
+        prior_net_income = optional_float(fundamental.get("priorYearSameQuarterNetIncome"))
+        if net_income is not None and prior_net_income is not None:
+            if prior_net_income > 0 and net_income >= 0:
+                change_pct = (net_income / prior_net_income - 1) * 100
+                direction = "increased" if change_pct >= 0 else "decreased"
+                evidence.append({
+                    "id": "fundamental_net_income_yoy",
+                    "kind": "fundamental",
+                    "stance": "positive" if change_pct > 0 else "negative" if change_pct < 0 else "neutral",
+                    "filingDate": filing_date,
+                    "statement": (
+                        f"The latest quarterly results filed on {filing_date} showed net income "
+                        f"{direction} {abs(change_pct):.1f}% year over year."
+                    ),
+                })
+            elif prior_net_income < 0 < net_income:
+                evidence.append({
+                    "id": "fundamental_returned_to_profit",
+                    "kind": "fundamental",
+                    "stance": "positive",
+                    "filingDate": filing_date,
+                    "statement": f"The latest quarterly results filed on {filing_date} showed the company returned to net profit from a prior-year loss.",
+                })
+            elif prior_net_income > 0 > net_income:
+                evidence.append({
+                    "id": "fundamental_moved_to_loss",
+                    "kind": "fundamental",
+                    "stance": "negative",
+                    "filingDate": filing_date,
+                    "statement": f"The latest quarterly results filed on {filing_date} showed the company moved from a prior-year net profit to a net loss.",
+                })
+
+    as_of_date = str(technical.get("date") or "")
+    if is_evidence_date_allowed(as_of_date, cutoff_date):
+        vs_sma20 = optional_float(technical.get("closeVsSma20Pct"))
+        vs_sma50 = optional_float(technical.get("closeVsSma50Pct"))
+        comparisons = []
+        if vs_sma20 is not None:
+            comparisons.append(f"{abs(vs_sma20):.1f}% {'above' if vs_sma20 >= 0 else 'below'} its 20-day moving average")
+        if vs_sma50 is not None:
+            comparisons.append(f"{abs(vs_sma50):.1f}% {'above' if vs_sma50 >= 0 else 'below'} its 50-day moving average")
+        if comparisons:
+            if vs_sma20 is not None and vs_sma50 is not None and vs_sma20 > 0 and vs_sma50 > 0:
+                stance = "positive"
+            elif vs_sma20 is not None and vs_sma50 is not None and vs_sma20 < 0 and vs_sma50 < 0:
+                stance = "negative"
+            else:
+                stance = "neutral"
+            evidence.append({
+                "id": "technical_moving_averages",
+                "kind": "technical",
+                "stance": stance,
+                "asOfDate": as_of_date,
+                "statement": f"As of {as_of_date}, the closing price was {' and '.join(comparisons)}.",
+            })
+
+    return filter_locked_evidence(evidence, cutoff_date)
 
 
 def build_pretrade_stock_context(item: dict, fmp_api_key: str) -> dict:
@@ -337,39 +447,14 @@ def build_pretrade_stock_context(item: dict, fmp_api_key: str) -> dict:
         },
         fmp_api_key,
     )
-    business = facts.get("business") or {}
     fundamental = facts.get("fundamentalDataAvailableBeforeTradeDate") or {}
     technical = facts.get("technicalDataAvailableBeforeTradeDate") or {}
-
-    latest_quarter = {}
-    if fundamental.get("latestQuarter"):
-        latest_quarter = {
-            "period": fundamental.get("latestQuarter"),
-            "filingDate": fundamental.get("filingDate"),
-            "revenueYoYPct": fundamental.get("revenueYoYPct"),
-            "grossProfitYoYPct": fundamental.get("grossProfitYoYPct"),
-            "netIncome": fundamental.get("netIncome"),
-            "priorYearSameQuarterNetIncome": fundamental.get("priorYearSameQuarterNetIncome"),
-            "grossMarginPct": fundamental.get("latestGrossMarginPct"),
-            "operatingMarginPct": fundamental.get("latestOperatingMarginPct"),
-            "netMarginPct": fundamental.get("latestNetMarginPct"),
-        }
 
     context = {
         "company": facts.get("trade", {}).get("company") or item.get("description") or symbol,
         "symbol": symbol,
         "dataCutoffDate": data_cutoff_date,
-        "sector": business.get("sector"),
-        "industry": business.get("industry"),
-        "businessDescription": compact_text(business.get("description")),
-        "latestFiledQuarter": latest_quarter or None,
-        "preTradeMarketData": {
-            "asOfDate": technical.get("date"),
-            "closeVsSma20Pct": technical.get("closeVsSma20Pct"),
-            "closeVsSma50Pct": technical.get("closeVsSma50Pct"),
-            "rsi14": technical.get("rsi14"),
-            "volumeVs20DayAvgPct": technical.get("volumeVs20DayAvgPct"),
-        },
+        "evidence": build_pretrade_evidence(fundamental, technical, data_cutoff_date),
     }
     with _PRETRADE_CONTEXT_CACHE_LOCK:
         _PRETRADE_CONTEXT_CACHE[cache_key] = context
@@ -377,7 +462,11 @@ def build_pretrade_stock_context(item: dict, fmp_api_key: str) -> dict:
 
 
 def enrich_pretrade_reason_items(items: list[dict], fmp_api_key: str) -> list[dict]:
-    enriched = [dict(item) for item in items]
+    enriched = []
+    for item in items:
+        clean_item = dict(item)
+        clean_item.pop("stockContext", None)
+        enriched.append(clean_item)
     if not fmp_api_key:
         return enriched
 
@@ -410,6 +499,79 @@ def enrich_pretrade_reason_items(items: list[dict], fmp_api_key: str) -> list[di
                 for position in positions:
                     enriched[position]["stockContext"] = context
     return enriched
+
+
+def locked_evidence_for_item(item: dict) -> list[dict]:
+    if str(item.get("kind", "")).lower() != "stock" or not is_open_position_type(item.get("type", "")):
+        return []
+    try:
+        trade_dt = parse_trade_date(item.get("tradeDate", ""))
+    except ValueError:
+        return []
+    cutoff_date = (trade_dt - timedelta(days=1)).strftime("%Y-%m-%d")
+    context = item.get("stockContext") or {}
+    if str(context.get("dataCutoffDate", "")) != cutoff_date:
+        return []
+    return filter_locked_evidence(context.get("evidence") or [], cutoff_date)
+
+
+def select_locked_evidence(item: dict, requested_evidence_id: str = "") -> dict | None:
+    evidence_rows = locked_evidence_for_item(item)
+    requested = str(requested_evidence_id or "").strip()
+    is_buy = "buy" in str(item.get("type", "")).lower()
+    preferred_stance = "positive" if is_buy else "negative"
+    for evidence in evidence_rows:
+        if evidence.get("id") == requested and evidence.get("stance") == preferred_stance:
+            return evidence
+
+    for evidence in evidence_rows:
+        if evidence.get("stance") == preferred_stance:
+            return evidence
+    return None
+
+
+def format_reason_quantity(value) -> str:
+    quantity = optional_float(value)
+    if quantity is None:
+        return "the submitted quantity of shares"
+    quantity = abs(quantity)
+    quantity_text = str(int(quantity)) if quantity.is_integer() else f"{quantity:g}"
+    return f"{quantity_text} {'share' if quantity == 1 else 'shares'}"
+
+
+def build_evidence_locked_stock_reason(item: dict, requested_evidence_id: str = "") -> tuple[str, dict | None]:
+    if str(item.get("kind", "")).lower() != "stock" or not is_open_position_type(item.get("type", "")):
+        return "", None
+
+    context = item.get("stockContext") or {}
+    security = str(item.get("security") or "the security").strip()
+    company = str(context.get("company") or item.get("description") or security).strip()
+    position_name = company if company.lower() == security.lower() else f"{company} ({security})"
+    quantity = format_reason_quantity(item.get("qty"))
+    price_range = str(item.get("proposedPriceRange") or "the submitted price range").strip()
+    is_buy = "buy" in str(item.get("type", "")).lower()
+    action = "BUY" if is_buy else "SELL"
+    purpose = (
+        f"to add or increase this position in the fund's portfolio"
+        if is_buy
+        else f"to establish or increase a short position in the fund's portfolio"
+    )
+    evidence = select_locked_evidence(item, requested_evidence_id)
+    if evidence:
+        evidence_sentence = evidence["statement"]
+        reason = (
+            f"I plan to {action} {quantity} of {position_name} {purpose}. "
+            f"{evidence_sentence} "
+            f"Based on this dated evidence, I intend to execute the trade within the proposed price range of {price_range}."
+        )
+        return reason, evidence
+
+    reason = (
+        f"I plan to {action} {quantity} of {position_name} {purpose}. "
+        "No dated company-specific evidence supporting this trade direction passed the evidence lock, so I am not relying on an unverified catalyst in this record. "
+        f"I intend to execute the trade within the proposed price range of {price_range}."
+    )
+    return reason, None
 
 
 # Index futures rarely return EOD data under their own/root symbol on FMP.
@@ -752,31 +914,21 @@ def generate_pretrade_reasons(items: list[dict], gemini_api_key: str) -> list[di
                     "type": "object",
                     "properties": {
                         "index": {"type": "integer"},
+                        "evidenceId": {"type": "string"},
                         "reason": {"type": "string"},
                     },
-                    "required": ["index", "reason"],
+                    "required": ["index", "evidenceId", "reason"],
                 },
             }
         },
         "required": ["rows"],
     }
     prompt = (
-        "You are preparing concise English pre-trade support text for internal fund compliance records.\n"
-        "For each transaction, write 2-4 professional sentences explaining why the proposed trade can be considered for pre-trade review.\n"
-        "Use only the transaction fields and stockContext supplied in Data JSON. Do not mention data vendors, analyst ratings, price targets, or unprovided news.\n"
-        "Keep the wording neutral: this is not investment advice and not a recommendation to outside investors.\n"
-        "Write in the first person as the fund portfolio manager, using clear, natural, professional English. Use conversational wording such as 'I plan to' or 'I intend to', and never refer to the portfolio manager or trader in the third person.\n"
-        "Avoid robotic compliance-template language. Never expose JSON field names such as proposedPriceRange; write 'proposed price range' instead.\n"
-        "stockContext contains company information and financial or market data available by its dataCutoffDate, which is before the trade date. Do not introduce any event, market movement, result, technical indicator, or circumstance that is not contained in that context.\n"
-        "Use BUY and SELL as the financial transaction terms. Never use the noun 'sale'.\n"
-        "Treat every quantity as an absolute positive quantity and never print a negative quantity.\n"
-        "When mentioning price, use only the provided proposedPriceRange; do not state a single exact price or add percentage-range wording.\n"
-        "For each open stock trade with stockContext, mention the company or symbol and include one concise company-specific reason supported by its business, latest filed financials, or pre-trade market trend. Prefer the most decision-useful fact and do not overload the paragraph with figures.\n"
-        "For BUY/open stock trades, explain naturally why I want to add or increase this company in the fund's portfolio. For SELL/open stock trades, explain why I want to establish short exposure, but only state weakness when stockContext supports it.\n"
-        "Do not write vague claims such as 'the market is optimistic' unless the supplied pre-trade market data supports the statement. Do not claim that earnings are imminent or expected to beat unless an explicit pre-trade earnings fact is supplied.\n"
-        "If stockContext is unavailable, identify the company from description/security and state the intended portfolio role without inventing company facts.\n"
-        "For sell/close trades, focus on risk control, rebalancing, exit, or exposure reduction when supported by the type.\n"
-        "For futures/options, describe hedging, exposure management, roll, or tactical implementation only when consistent with the transaction fields.\n\n"
+        "You are selecting locked pre-trade evidence and preparing concise English support text for internal fund compliance records.\n"
+        "For every open stock trade, inspect only stockContext.evidence and return exactly one evidenceId from that list whose stance best supports the BUY or SELL direction. Never invent or alter an evidence ID. Set reason to an empty string for stock trades because the backend will compose the final wording from the locked evidence statement.\n"
+        "If a stock trade has no evidence, return an empty evidenceId and an empty reason. Never introduce earnings announcements, news, analyst views, market expectations, events, figures, dates, or company claims.\n"
+        "For non-stock trades only, set evidenceId to an empty string and write 2-4 first-person professional sentences using only the submitted transaction fields. Use BUY and SELL, positive quantity, and the provided proposedPriceRange. Do not mention data vendors, JSON field names, unprovided events, analyst ratings, price targets, or news.\n"
+        "Keep all wording neutral and suitable for an internal compliance record, not investment advice to outside investors.\n\n"
         f"Data JSON:\n{json.dumps(rows, ensure_ascii=False)}"
     )
     body = {
@@ -797,15 +949,37 @@ def generate_pretrade_reasons(items: list[dict], gemini_api_key: str) -> list[di
     text = "\n".join(part.get("text", "") for part in response["candidates"][0]["content"]["parts"])
     parsed = json.loads(text)
 
-    results = []
+    ai_rows = {}
     for row in parsed.get("rows", []):
         try:
             index = int(row.get("index"))
         except (TypeError, ValueError):
             continue
-        reason = str(row.get("reason", "")).strip()
+        ai_rows[index] = row
+
+    results = []
+    for position, item in enumerate(items):
+        try:
+            index = int(item.get("index", position))
+        except (TypeError, ValueError):
+            index = position
+        ai_row = ai_rows.get(index, {})
+        locked_reason, selected_evidence = build_evidence_locked_stock_reason(
+            item,
+            str(ai_row.get("evidenceId", "")),
+        )
+        if locked_reason:
+            results.append({
+                "index": index,
+                "reason": locked_reason,
+                "evidenceId": selected_evidence.get("id", "") if selected_evidence else "",
+                "evidenceDate": evidence_date(selected_evidence) if selected_evidence else "",
+            })
+            continue
+
+        reason = str(ai_row.get("reason", "")).strip()
         if reason:
-            results.append({"index": index, "reason": reason})
+            results.append({"index": index, "reason": reason, "evidenceId": "", "evidenceDate": ""})
     return results
 
 

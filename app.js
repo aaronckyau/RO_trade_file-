@@ -1096,6 +1096,8 @@ async function ensurePreTradeReasonsFor(candidates) {
         const transaction = state.transactions[row.index];
         if (transaction && row.reason) {
           transaction.reason = normalizeInvestmentSupportingVoice(row.reason);
+          transaction.reasonEvidenceId = cleanText(row.evidenceId);
+          transaction.reasonEvidenceDate = cleanText(row.evidenceDate);
         }
       });
     }
