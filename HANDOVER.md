@@ -51,6 +51,7 @@ Pre-trade report:
 Post-trade report:
 
 - Title: `Transaction Post-Trade Record`
+- Subtitle: `The complete daily transaction record has been attached to review`
 - Fund Name
 - Dealing Account
 - Trade Date

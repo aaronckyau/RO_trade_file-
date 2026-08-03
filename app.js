@@ -1,5 +1,6 @@
 const TRANSACTIONS_PER_PAGE = 20;
 const PRE_TRADE_REASON_BATCH_SIZE = 40;
+const POST_TRADE_ATTACHMENT_NOTICE = "The complete daily transaction record has been attached to review";
 
 const TYPE_LABELS = {
   BO: "Buy to Open",
@@ -1236,12 +1237,13 @@ function drawProfessionalPostTradeReport(doc, context) {
   const width = doc.internal.pageSize.getWidth() - margin * 2;
   const checked = state.defaultChecklistChecked;
   let y = drawPostTradeTitle(doc, "Transaction Post-Trade Record", margin, 34, width);
+  y = drawPostTradeSubtitle(doc, POST_TRADE_ATTACHMENT_NOTICE, margin, y + 8, width);
 
   y = drawPdfKeyValueGrid(doc, [
     ["Fund Name:", context.company],
     ["Dealing Account:", context.dealingAccount || context.company],
     ["Trade Date:", formatDisplayTradeDate(context.tradeDate)]
-  ], margin, y + 12, width, { columns: 1, rowHeight: 28 });
+  ], margin, y + 10, width, { columns: 1, rowHeight: 28 });
 
   y = drawPostTradeCheckPanel(
     doc,
@@ -1284,6 +1286,14 @@ function drawPostTradeTitle(doc, title, x, y, width) {
   doc.text(title, x + 10, y + 26);
   doc.setTextColor(39, 55, 70);
   return y + 40;
+}
+
+function drawPostTradeSubtitle(doc, text, x, y, width) {
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10.5);
+  doc.setTextColor(39, 55, 70);
+  doc.text(text, x + width / 2, y + 10, { align: "center" });
+  return y + 14;
 }
 
 function drawPostTradeConclusionBand(doc, text, x, y, width) {
@@ -1567,7 +1577,8 @@ function buildPostTradeDocxBytes(context) {
   const checked = state.defaultChecklistChecked;
   const body = [
     docxPostTradeTitle("Transaction Post-Trade Record"),
-    docxTemplateSpacer(),
+    docxPostTradeSubtitle(POST_TRADE_ATTACHMENT_NOTICE),
+    docxTemplateSpacer(70),
     docxPostTradeKeyValueTable([
       ["Fund Name:", context.company],
       ["Dealing Account:", context.dealingAccount || context.company],
@@ -1626,6 +1637,10 @@ function docxPostTradeTitle(text) {
   return docxTable([[
     { text, align: "left", bold: true, size: 39, color: "FFFFFF", fill: "213D56" }
   ]], [10036]);
+}
+
+function docxPostTradeSubtitle(text) {
+  return docxParagraph(text, { align: "center", size: 20, color: "273746" });
 }
 
 function docxTemplateSpacer(height = 100) {
