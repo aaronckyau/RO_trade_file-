@@ -25,7 +25,7 @@ Current production behavior:
 - The transaction-date toolbar has individual `Post PDF` and `Post Word` buttons for the selected trade date. If a date spans multiple preview pages, the post-trade report still includes the complete daily group.
 - All report text in the generated pre/post templates is English.
 - Pre-Trade `Reason` is deterministic for closing positions: positive `REALISED_PROFIT` produces a take-profit exit explanation, negative `REALISED_PROFIT` produces a stop-loss explanation, and zero/blank produces a neutral exposure-exit explanation. The text also records the realised amount when available, quantity, proposed price, and relevant risk/best-execution checks.
-- Pre-Trade reports use the financial terms `BUY` and `SELL` (never `sale`), display quantity as an absolute positive value, and display Proposed Price as a one-decimal range calculated from -1% to +1% around the source price without printing the percentage wording. Gemini receives the same normalized quantity and price range, and generated reasons are normalized again before export.
+- Pre-Trade reports use the financial terms `BUY` and `SELL` (never `sale`), display quantity as an absolute positive value, and display Proposed Price as a one-decimal range calculated from -1% to +1% around the source price without printing the percentage wording. Investment Supporting text is written in the fund portfolio manager's first-person voice using natural professional English, does not expose JSON field names, and does not introduce circumstances not contained in the submitted pre-trade data. Gemini receives the same normalized quantity and price range, and generated reasons are normalized again before export.
 
 ## Output Templates
 
@@ -51,11 +51,10 @@ Pre-trade report:
 Post-trade report:
 
 - Title: `Transaction Post-Trade Record`
-- Subtitle: `The complete daily transaction record has been attached to review`
 - Fund Name
 - Dealing Account
 - Trade Date
-- Checked statement that the complete daily transaction record has been reviewed
+- Checked statement: `The complete daily transaction record has been attached.`
 - Signed By Trader
 - Checked statement that no executed trade breached the trading instruction
 - Confirmed By PM

@@ -1,6 +1,5 @@
 const TRANSACTIONS_PER_PAGE = 20;
 const PRE_TRADE_REASON_BATCH_SIZE = 40;
-const POST_TRADE_ATTACHMENT_NOTICE = "The complete daily transaction record has been attached to review";
 
 const TYPE_LABELS = {
   BO: "Buy to Open",
@@ -1095,7 +1094,7 @@ async function ensurePreTradeReasonsFor(candidates) {
       (data.results || []).forEach((row) => {
         const transaction = state.transactions[row.index];
         if (transaction && row.reason) {
-          transaction.reason = normalizeFinancialReasonTerms(row.reason);
+          transaction.reason = normalizeInvestmentSupportingVoice(row.reason);
         }
       });
     }
@@ -1120,8 +1119,8 @@ function fallbackPreTradeReason(transaction) {
   const action = normalizeReportTradeType(transaction.type);
   const security = transaction.security || "the security";
   const priceRange = formatProposedPriceRange(transaction.price, transaction.ccy);
-  const quantity = formatReportQuantity(transaction.qty) || "the proposed quantity";
-  return `The proposed ${action} transaction in ${security} is recorded for pre-trade review based on the submitted order details, including proposed price range ${priceRange} and quantity ${quantity}. The portfolio manager should confirm that the transaction is consistent with the fund mandate, investment restrictions, and execution requirements before the order is released.`;
+  const quantity = formatReportQuantityWithUnit(transaction);
+  return `I plan to ${action} ${quantity} of ${security} within the proposed price range of ${priceRange} as part of the fund's current strategy and to adjust portfolio exposure. Before I release the order, I will confirm that it is consistent with the fund mandate, investment restrictions, and execution requirements.`;
 }
 
 function buildClosePositionReason(transaction) {
@@ -1130,21 +1129,20 @@ function buildClosePositionReason(transaction) {
   const action = normalizeReportTradeType(transaction.type);
   const security = transaction.security || "the security";
   const realisedProfit = parseSignedReportNumber(transaction.realised);
-  const reportQuantity = formatReportQuantity(transaction.qty);
-  const quantity = reportQuantity ? `${reportQuantity} units` : "the submitted quantity";
+  const quantity = formatReportQuantityWithUnit(transaction);
   const priceRange = formatProposedPriceRange(transaction.price, transaction.ccy);
 
   if (realisedProfit !== null && realisedProfit > 0) {
     const amount = formatAbsoluteMoney(realisedProfit, transaction.ccy);
-    return `The proposed ${action} transaction closes the existing position in ${security} as a take-profit exit. The recorded realised profit is ${amount}, indicating that the trade crystallises gains while reducing the fund's exposure. The order covers ${quantity} within the proposed price range ${priceRange} and should be checked against the intended exit level, available liquidity, and best-execution requirements before release.`;
+    return `I plan to ${action} ${quantity} of ${security} to close the existing position and take profit. The submitted data shows a realised profit of ${amount}, so I am crystallising gains and reducing the fund's exposure. I will work within the proposed price range of ${priceRange} and consider the intended exit level, available liquidity, and best execution before releasing the order.`;
   }
 
   if (realisedProfit !== null && realisedProfit < 0) {
     const amount = formatAbsoluteMoney(realisedProfit, transaction.ccy);
-    return `The proposed ${action} transaction closes the existing position in ${security} as a stop-loss exit. The recorded realised loss is ${amount}, indicating that the trade is intended to limit further downside and reduce risk exposure. The order covers ${quantity} within the proposed price range ${priceRange} and should be checked against the approved risk limits, available liquidity, and best-execution requirements before release.`;
+    return `I plan to ${action} ${quantity} of ${security} to close the existing position as a stop-loss. The submitted data shows a realised loss of ${amount}, so I am limiting further downside and reducing risk exposure. I will work within the proposed price range of ${priceRange} and consider the approved risk limits, available liquidity, and best execution before releasing the order.`;
   }
 
-  return `The proposed ${action} transaction closes the existing position in ${security} to exit or reduce the current exposure. No positive or negative realised profit is recorded in the submitted trade data, so the exit should be assessed against the portfolio manager's stated rationale. The order covers ${quantity} within the proposed price range ${priceRange} and should be checked for mandate compliance, available liquidity, and best execution before release.`;
+  return `I plan to ${action} ${quantity} of ${security} to exit or reduce the fund's current exposure. As the submitted data does not show a positive or negative realised result, I will assess the exit against my stated investment rationale. I will work within the proposed price range of ${priceRange} and confirm mandate compliance, available liquidity, and best execution before releasing the order.`;
 }
 
 function isClosePositionTrade(type) {
@@ -1175,6 +1173,14 @@ function formatReportQuantity(value) {
   return trimNumber(Math.abs(number));
 }
 
+function formatReportQuantityWithUnit(transaction) {
+  const quantity = formatReportQuantity(transaction?.qty);
+  if (!quantity) return "the submitted quantity";
+  const kind = resolvedKind(transaction);
+  const singular = kind === "stock" ? "share" : ["future", "option"].includes(kind) ? "contract" : "unit";
+  return `${quantity} ${Number(quantity) === 1 ? singular : `${singular}s`}`;
+}
+
 function formatProposedPriceRange(price, ccy) {
   const currency = cleanText(ccy) || "USD";
   const number = parseSignedReportNumber(price);
@@ -1192,8 +1198,22 @@ function normalizeFinancialReasonTerms(reason) {
     .replace(/\bsale\b/gi, "SELL");
 }
 
+function normalizeInvestmentSupportingVoice(reason) {
+  return normalizeFinancialReasonTerms(reason)
+    .replace(/\bproposedPriceRange\b/g, "proposed price range")
+    .replace(/^The proposed\s+(BUY|SELL)\s+of\s+(.+?)\s+is intended to\s+/i, "I plan to $1 $2 to ")
+    .replace(/^The proposed\s+(BUY|SELL)\s+transaction\s+in\s+(.+?)\s+is intended to\s+/i, "I plan to $1 $2 to ")
+    .replace(/^The proposed\s+(BUY|SELL)\s+of\s+/i, "I plan to $1 ")
+    .replace(/^The proposed\s+(BUY|SELL)\s+transaction\s+in\s+/i, "I plan to $1 ")
+    .replace(/^The proposed\s+(BUY|SELL)\s+transaction\s+/i, "I plan to $1 ")
+    .replace(/\bThe transaction is executed within the proposed price range of\b/gi, "I will execute the trade within the proposed price range of")
+    .replace(/\bincrease portfolio exposure\b/gi, "increase the fund's exposure")
+    .replace(/\bto align with current strategy implementation\b/gi, "so it remains in line with the fund's current strategy")
+    .replace(/\bThe (?:portfolio manager|trader) should\b/gi, "I will");
+}
+
 function getPreTradeReason(transaction) {
-  return normalizeFinancialReasonTerms(
+  return normalizeInvestmentSupportingVoice(
     buildClosePositionReason(transaction) || transaction.reason || fallbackPreTradeReason(transaction)
   );
 }
@@ -1237,17 +1257,16 @@ function drawProfessionalPostTradeReport(doc, context) {
   const width = doc.internal.pageSize.getWidth() - margin * 2;
   const checked = state.defaultChecklistChecked;
   let y = drawPostTradeTitle(doc, "Transaction Post-Trade Record", margin, 34, width);
-  y = drawPostTradeSubtitle(doc, POST_TRADE_ATTACHMENT_NOTICE, margin, y + 8, width);
 
   y = drawPdfKeyValueGrid(doc, [
     ["Fund Name:", context.company],
     ["Dealing Account:", context.dealingAccount || context.company],
     ["Trade Date:", formatDisplayTradeDate(context.tradeDate)]
-  ], margin, y + 10, width, { columns: 1, rowHeight: 28 });
+  ], margin, y + 12, width, { columns: 1, rowHeight: 28 });
 
   y = drawPostTradeCheckPanel(
     doc,
-    ["The complete daily transaction record has been reviewed."],
+    ["The complete daily transaction record has been attached."],
     margin,
     y + 14,
     width,
@@ -1286,14 +1305,6 @@ function drawPostTradeTitle(doc, title, x, y, width) {
   doc.text(title, x + 10, y + 26);
   doc.setTextColor(39, 55, 70);
   return y + 40;
-}
-
-function drawPostTradeSubtitle(doc, text, x, y, width) {
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10.5);
-  doc.setTextColor(39, 55, 70);
-  doc.text(text, x + width / 2, y + 10, { align: "center" });
-  return y + 14;
 }
 
 function drawPostTradeConclusionBand(doc, text, x, y, width) {
@@ -1577,8 +1588,7 @@ function buildPostTradeDocxBytes(context) {
   const checked = state.defaultChecklistChecked;
   const body = [
     docxPostTradeTitle("Transaction Post-Trade Record"),
-    docxPostTradeSubtitle(POST_TRADE_ATTACHMENT_NOTICE),
-    docxTemplateSpacer(70),
+    docxTemplateSpacer(),
     docxPostTradeKeyValueTable([
       ["Fund Name:", context.company],
       ["Dealing Account:", context.dealingAccount || context.company],
@@ -1586,7 +1596,7 @@ function buildPostTradeDocxBytes(context) {
     ]),
     docxTemplateSpacer(),
     docxPostTradeCheckPanel([
-      "The complete daily transaction record has been reviewed."
+      "The complete daily transaction record has been attached."
     ], checked, { fill: "F6F8FA" }),
     docxTemplateSpacer(),
     docxPostTradeSignerTable("Signed By Trader:", state.executedSignature, docx),
@@ -1637,10 +1647,6 @@ function docxPostTradeTitle(text) {
   return docxTable([[
     { text, align: "left", bold: true, size: 39, color: "FFFFFF", fill: "213D56" }
   ]], [10036]);
-}
-
-function docxPostTradeSubtitle(text) {
-  return docxParagraph(text, { align: "center", size: 20, color: "273746" });
 }
 
 function docxTemplateSpacer(height = 100) {
