@@ -530,15 +530,6 @@ def select_locked_evidence(item: dict, requested_evidence_id: str = "") -> dict 
     return None
 
 
-def format_reason_quantity(value) -> str:
-    quantity = optional_float(value)
-    if quantity is None:
-        return "the submitted quantity of shares"
-    quantity = abs(quantity)
-    quantity_text = str(int(quantity)) if quantity.is_integer() else f"{quantity:g}"
-    return f"{quantity_text} {'share' if quantity == 1 else 'shares'}"
-
-
 def build_evidence_locked_stock_reason(item: dict, requested_evidence_id: str = "") -> tuple[str, dict | None]:
     if str(item.get("kind", "")).lower() != "stock" or not is_open_position_type(item.get("type", "")):
         return "", None
@@ -547,29 +538,25 @@ def build_evidence_locked_stock_reason(item: dict, requested_evidence_id: str = 
     security = str(item.get("security") or "the security").strip()
     company = str(context.get("company") or item.get("description") or security).strip()
     position_name = company if company.lower() == security.lower() else f"{company} ({security})"
-    quantity = format_reason_quantity(item.get("qty"))
-    price_range = str(item.get("proposedPriceRange") or "the submitted price range").strip()
     is_buy = "buy" in str(item.get("type", "")).lower()
     action = "BUY" if is_buy else "SELL"
     purpose = (
-        f"to add or increase this position in the fund's portfolio"
+        "to add or increase the fund's exposure to the company"
         if is_buy
-        else f"to establish or increase a short position in the fund's portfolio"
+        else "to establish or increase the fund's short exposure to the company"
     )
     evidence = select_locked_evidence(item, requested_evidence_id)
     if evidence:
         evidence_sentence = evidence["statement"]
         reason = (
-            f"I plan to {action} {quantity} of {position_name} {purpose}. "
-            f"{evidence_sentence} "
-            f"Based on this dated evidence, I intend to execute the trade within the proposed price range of {price_range}."
+            f"I plan to {action} {position_name} {purpose}. "
+            f"{evidence_sentence}"
         )
         return reason, evidence
 
     reason = (
-        f"I plan to {action} {quantity} of {position_name} {purpose}. "
-        "No dated company-specific evidence supporting this trade direction passed the evidence lock, so I am not relying on an unverified catalyst in this record. "
-        f"I intend to execute the trade within the proposed price range of {price_range}."
+        f"I plan to {action} {position_name} {purpose}. "
+        "No dated company-specific evidence supporting this trade direction passed the evidence lock, so I am not relying on an unverified catalyst in this record."
     )
     return reason, None
 
@@ -895,8 +882,6 @@ def generate_pretrade_reasons(items: list[dict], gemini_api_key: str) -> list[di
             "type": str(item.get("type", "")),
             "security": str(item.get("security", "")),
             "description": str(item.get("description", "")),
-            "qty": str(item.get("qty", "")),
-            "proposedPriceRange": str(item.get("proposedPriceRange", item.get("price", ""))),
             "ccy": str(item.get("ccy", "")),
             "gross": str(item.get("gross", "")),
             "counterpart": str(item.get("counterpart", "")),
@@ -927,7 +912,7 @@ def generate_pretrade_reasons(items: list[dict], gemini_api_key: str) -> list[di
         "You are selecting locked pre-trade evidence and preparing concise English support text for internal fund compliance records.\n"
         "For every open stock trade, inspect only stockContext.evidence and return exactly one evidenceId from that list whose stance best supports the BUY or SELL direction. Never invent or alter an evidence ID. Set reason to an empty string for stock trades because the backend will compose the final wording from the locked evidence statement.\n"
         "If a stock trade has no evidence, return an empty evidenceId and an empty reason. Never introduce earnings announcements, news, analyst views, market expectations, events, figures, dates, or company claims.\n"
-        "For non-stock trades only, set evidenceId to an empty string and write 2-4 first-person professional sentences using only the submitted transaction fields. Use BUY and SELL, positive quantity, and the provided proposedPriceRange. Do not mention data vendors, JSON field names, unprovided events, analyst ratings, price targets, or news.\n"
+        "For non-stock trades only, set evidenceId to an empty string and write 2-3 first-person professional sentences using only the submitted transaction fields. Use BUY and SELL. Do not mention quantity, price, proposed price range, data vendors, JSON field names, unprovided events, analyst ratings, price targets, or news.\n"
         "Keep all wording neutral and suitable for an internal compliance record, not investment advice to outside investors.\n\n"
         f"Data JSON:\n{json.dumps(rows, ensure_ascii=False)}"
     )

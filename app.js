@@ -1123,12 +1123,10 @@ function fallbackPreTradeReason(transaction) {
   const security = transaction.security || "the security";
   const company = cleanText(transaction.description);
   const positionName = company && company !== security ? `${company} (${security})` : security;
-  const priceRange = formatProposedPriceRange(transaction.price, transaction.ccy);
-  const quantity = formatReportQuantityWithUnit(transaction);
   if (action === "BUY") {
-    return `I plan to BUY ${quantity} of ${security} to add ${positionName} to the fund's portfolio and gain targeted exposure to the company's future performance. I will work within the proposed price range of ${priceRange} and confirm mandate compliance, liquidity, and best execution before releasing the order.`;
+    return `I plan to BUY ${positionName} to add or increase the fund's exposure to the company. I believe the company-specific investment case supports including this stock in the portfolio, subject to mandate and risk checks before the order is released.`;
   }
-  return `I plan to SELL ${quantity} of ${security} to establish short exposure to ${positionName} as part of the fund's current strategy. I will work within the proposed price range of ${priceRange} and confirm the investment rationale, risk limits, liquidity, and best execution before releasing the order.`;
+  return `I plan to SELL ${positionName} to establish or increase the fund's short exposure to the company. I believe the company-specific investment case supports a short position in this stock, subject to mandate and risk checks before the order is released.`;
 }
 
 function buildClosePositionReason(transaction) {
@@ -1136,21 +1134,21 @@ function buildClosePositionReason(transaction) {
 
   const action = normalizeReportTradeType(transaction.type);
   const security = transaction.security || "the security";
+  const company = cleanText(transaction.description);
+  const positionName = company && company !== security ? `${company} (${security})` : security;
   const realisedProfit = parseSignedReportNumber(transaction.realised);
-  const quantity = formatReportQuantityWithUnit(transaction);
-  const priceRange = formatProposedPriceRange(transaction.price, transaction.ccy);
 
   if (realisedProfit !== null && realisedProfit > 0) {
     const amount = formatAbsoluteMoney(realisedProfit, transaction.ccy);
-    return `I plan to ${action} ${quantity} of ${security} to close the existing position and take profit. The submitted data shows a realised profit of ${amount}, so I am crystallising gains and reducing the fund's exposure. I will work within the proposed price range of ${priceRange} and consider the intended exit level, available liquidity, and best execution before releasing the order.`;
+    return `I plan to ${action} ${positionName} to close the existing position and take profit. The submitted data shows a realised profit of ${amount}, so I am crystallising gains and reducing the fund's exposure to the stock.`;
   }
 
   if (realisedProfit !== null && realisedProfit < 0) {
     const amount = formatAbsoluteMoney(realisedProfit, transaction.ccy);
-    return `I plan to ${action} ${quantity} of ${security} to close the existing position as a stop-loss. The submitted data shows a realised loss of ${amount}, so I am limiting further downside and reducing risk exposure. I will work within the proposed price range of ${priceRange} and consider the approved risk limits, available liquidity, and best execution before releasing the order.`;
+    return `I plan to ${action} ${positionName} to close the existing position as a stop-loss. The submitted data shows a realised loss of ${amount}, so I am limiting further downside and reducing the fund's exposure to the stock.`;
   }
 
-  return `I plan to ${action} ${quantity} of ${security} to exit or reduce the fund's current exposure. As the submitted data does not show a positive or negative realised result, I will assess the exit against my stated investment rationale. I will work within the proposed price range of ${priceRange} and confirm mandate compliance, available liquidity, and best execution before releasing the order.`;
+  return `I plan to ${action} ${positionName} to exit or reduce the fund's current exposure to the stock. As the submitted data does not show a positive or negative realised result, I will assess the exit against the original company-specific investment rationale.`;
 }
 
 function isClosePositionTrade(type) {
@@ -1179,14 +1177,6 @@ function formatReportQuantity(value) {
   const number = parseSignedReportNumber(value);
   if (number === null) return cleanText(value).replace(/^-/, "");
   return trimNumber(Math.abs(number));
-}
-
-function formatReportQuantityWithUnit(transaction) {
-  const quantity = formatReportQuantity(transaction?.qty);
-  if (!quantity) return "the submitted quantity";
-  const kind = resolvedKind(transaction);
-  const singular = kind === "stock" ? "share" : ["future", "option"].includes(kind) ? "contract" : "unit";
-  return `${quantity} ${Number(quantity) === 1 ? singular : `${singular}s`}`;
 }
 
 function formatProposedPriceRange(price, ccy) {
