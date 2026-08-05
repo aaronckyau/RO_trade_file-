@@ -660,6 +660,50 @@ def build_evidence_locked_stock_reason(item: dict, requested_evidence_id: str = 
     return reason, None
 
 
+def build_directional_futures_reason(item: dict) -> str:
+    if str(item.get("kind", "")).lower() != "future" or not is_open_position_type(item.get("type", "")):
+        return ""
+
+    security = str(item.get("security") or "the futures contract").strip()
+    symbol = parse_symbol(security)
+    is_buy = "buy" in str(item.get("type", "")).lower()
+    action = "BUY" if is_buy else "SELL"
+    direction = "Directional Long" if is_buy else "Directional Short"
+
+    profiles = [
+        (("MNQ", "NQ"), "the Nasdaq-100", "large-cap growth and technology equities", "index volatility"),
+        (("MES", "ES"), "the S&P 500", "broad U.S. large-cap equities", "broad-market volatility"),
+        (("M2K", "RTY"), "the Russell 2000", "U.S. small-cap equities", "small-cap volatility"),
+        (("MYM", "YM"), "the Dow Jones Industrial Average", "U.S. blue-chip equities", "index volatility"),
+    ]
+    market_name = str(item.get("underlyingSymbol") or item.get("description") or "the underlying market").strip()
+    market_exposure = "the relevant futures market"
+    volatility_risk = "market volatility"
+    for roots, candidate_market, candidate_exposure, candidate_volatility in profiles:
+        if any(symbol.startswith(root) for root in roots):
+            market_name = candidate_market
+            market_exposure = candidate_exposure
+            volatility_risk = candidate_volatility
+            break
+
+    if is_buy:
+        portfolio_effect = (
+            f"The contract provides a liquid and capital-efficient way to increase participation in "
+            f"{market_exposure} and adjust portfolio beta without changing individual holdings."
+        )
+    else:
+        portfolio_effect = (
+            f"The contract provides a liquid and capital-efficient way to express a cautious view on "
+            f"{market_exposure} and adjust portfolio beta without changing individual holdings."
+        )
+
+    return (
+        f"I plan to {action} {security} to establish {direction} exposure to {market_name}. "
+        f"{portfolio_effect} "
+        f"I will monitor leverage, {volatility_risk}, margin requirements, and contract expiry."
+    )
+
+
 # Index futures rarely return EOD data under their own/root symbol on FMP.
 # Fall back to a tradable ETF proxy that tracks the same index.
 INDEX_PROXY = {
@@ -985,6 +1029,7 @@ def generate_pretrade_reasons(items: list[dict], gemini_api_key: str) -> list[di
             "gross": str(item.get("gross", "")),
             "counterpart": str(item.get("counterpart", "")),
             "kind": str(item.get("kind", "")),
+            "underlyingSymbol": str(item.get("underlyingSymbol", "")),
             "stockContext": item.get("stockContext") or None,
         }
         for index, item in enumerate(items)
@@ -1011,7 +1056,7 @@ def generate_pretrade_reasons(items: list[dict], gemini_api_key: str) -> list[di
         "You are selecting locked pre-trade evidence and preparing concise English support text for internal fund compliance records.\n"
         "For every open stock trade, inspect only stockContext.evidence and return exactly one evidenceId from that list whose stance best supports the BUY or SELL direction. Never invent or alter an evidence ID. Set reason to an empty string for stock trades because the backend will compose the final wording from the locked evidence statement.\n"
         "If a stock trade has no evidence, return an empty evidenceId and an empty reason. Never introduce earnings announcements, news, analyst views, market expectations, events, figures, dates, or company claims.\n"
-        "For non-stock trades only, set evidenceId to an empty string and write 2-3 first-person professional sentences using only the submitted transaction fields. Use BUY and SELL. Do not mention quantity, price, proposed price range, data vendors, JSON field names, unprovided events, analyst ratings, price targets, or news.\n"
+        "For option trades only, set evidenceId to an empty string and write 2-3 first-person professional sentences using only the submitted transaction fields. Futures reasons are composed deterministically by the backend as Directional Long or Directional Short and any model-written futures reason will be ignored. Use BUY and SELL. Do not mention quantity, price, proposed price range, data vendors, JSON field names, unprovided events, analyst ratings, price targets, or news.\n"
         "Keep all wording neutral and suitable for an internal compliance record, not investment advice to outside investors.\n\n"
         f"Data JSON:\n{json.dumps(rows, ensure_ascii=False)}"
     )
@@ -1048,6 +1093,10 @@ def generate_pretrade_reasons(items: list[dict], gemini_api_key: str) -> list[di
         except (TypeError, ValueError):
             index = position
         ai_row = ai_rows.get(index, {})
+        futures_reason = build_directional_futures_reason(item)
+        if futures_reason:
+            results.append({"index": index, "reason": futures_reason, "evidenceId": "", "evidenceDate": ""})
+            continue
         locked_reason, selected_evidence = build_evidence_locked_stock_reason(
             item,
             str(ai_row.get("evidenceId", "")),

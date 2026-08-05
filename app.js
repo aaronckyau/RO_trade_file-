@@ -1060,8 +1060,8 @@ async function ensurePreTradeReasons() {
 
 async function ensurePreTradeReasonsFor(candidates) {
   candidates.forEach(({ transaction }) => {
-    const closeReason = buildClosePositionReason(transaction);
-    if (closeReason) transaction.reason = closeReason;
+    const deterministicReason = buildClosePositionReason(transaction) || buildDirectionalFuturesReason(transaction);
+    if (deterministicReason) transaction.reason = deterministicReason;
   });
   const missing = candidates.filter(({ transaction }) => !cleanText(transaction.reason));
   if (!missing.length) return;
@@ -1086,7 +1086,8 @@ async function ensurePreTradeReasonsFor(candidates) {
             ccy: transaction.ccy,
             gross: transaction.gross,
             counterpart: transaction.counterpart,
-            kind: resolvedKind(transaction) || "unsupported"
+            kind: resolvedKind(transaction) || "unsupported",
+            underlyingSymbol: transaction.underlyingSymbol || ""
           }))
         })
       });
@@ -1118,6 +1119,8 @@ function getPreTradeReasonsApiUrl() {
 function fallbackPreTradeReason(transaction) {
   const closeReason = buildClosePositionReason(transaction);
   if (closeReason) return closeReason;
+  const futuresReason = buildDirectionalFuturesReason(transaction);
+  if (futuresReason) return futuresReason;
 
   const action = normalizeReportTradeType(transaction.type);
   const security = transaction.security || "the security";
@@ -1129,20 +1132,45 @@ function fallbackPreTradeReason(transaction) {
   return `I plan to SELL ${positionName} to establish or increase the fund's short exposure to the company. I believe the company-specific investment case supports a short position in this stock, subject to mandate and risk checks before the order is released.`;
 }
 
+function buildDirectionalFuturesReason(transaction) {
+  if (resolvedKind(transaction) !== "future" || !isOpenPosition(transaction)) return "";
+
+  const action = normalizeReportTradeType(transaction.type);
+  const isLong = action === "BUY";
+  const direction = isLong ? "Directional Long" : "Directional Short";
+  const security = cleanText(transaction.security) || "the futures contract";
+  const symbol = security.split(/\s+/)[0].replace(/[^A-Za-z0-9.-]/g, "").toUpperCase();
+  const profiles = [
+    { roots: ["MNQ", "NQ"], market: "the Nasdaq-100", exposure: "large-cap growth and technology equities", volatility: "index volatility" },
+    { roots: ["MES", "ES"], market: "the S&P 500", exposure: "broad U.S. large-cap equities", volatility: "broad-market volatility" },
+    { roots: ["M2K", "RTY"], market: "the Russell 2000", exposure: "U.S. small-cap equities", volatility: "small-cap volatility" },
+    { roots: ["MYM", "YM"], market: "the Dow Jones Industrial Average", exposure: "U.S. blue-chip equities", volatility: "index volatility" }
+  ];
+  const profile = profiles.find((candidate) => candidate.roots.some((root) => symbol.startsWith(root)));
+  const market = profile?.market || cleanText(transaction.underlyingSymbol) || cleanText(transaction.description) || "the underlying market";
+  const exposure = profile?.exposure || "the relevant futures market";
+  const volatility = profile?.volatility || "market volatility";
+  const portfolioEffect = isLong
+    ? `The contract provides a liquid and capital-efficient way to increase participation in ${exposure} and adjust portfolio beta without changing individual holdings.`
+    : `The contract provides a liquid and capital-efficient way to express a cautious view on ${exposure} and adjust portfolio beta without changing individual holdings.`;
+  return `I plan to ${action} ${security} to establish ${direction} exposure to ${market}. ${portfolioEffect} I will monitor leverage, ${volatility}, margin requirements, and contract expiry.`;
+}
+
 function buildClosePositionReason(transaction) {
   if (!isClosePositionTrade(transaction?.type)) return "";
 
   const action = normalizeReportTradeType(transaction.type);
   const security = transaction.security || "the security";
+  const exposureLabel = resolvedKind(transaction) === "future" ? "futures exposure" : "exposure to the stock";
   const realisedProfit = parseSignedReportNumber(transaction.realised);
 
   if (realisedProfit !== null && realisedProfit > 0) {
     return selectCloseReasonVariant(transaction, [
-      `I plan to ${action} ${security} to close the existing position, take profit, and reduce the fund's exposure to the stock.`,
-      `I intend to ${action} ${security} to realise gains on the existing position and lower the fund's exposure to the stock.`,
-      `I will ${action} ${security} to exit the existing position at a profit and scale back the fund's exposure to the stock.`,
-      `I plan to ${action} ${security} to secure the gain on the existing position while reducing the fund's exposure to the stock.`,
-      `I intend to ${action} ${security} to take profit on the existing position and bring down the fund's exposure to the stock.`
+      `I plan to ${action} ${security} to close the existing position, take profit, and reduce the fund's ${exposureLabel}.`,
+      `I intend to ${action} ${security} to realise gains on the existing position and lower the fund's ${exposureLabel}.`,
+      `I will ${action} ${security} to exit the existing position at a profit and scale back the fund's ${exposureLabel}.`,
+      `I plan to ${action} ${security} to secure the gain on the existing position while reducing the fund's ${exposureLabel}.`,
+      `I intend to ${action} ${security} to take profit on the existing position and bring down the fund's ${exposureLabel}.`
     ]);
   }
 
@@ -1151,16 +1179,16 @@ function buildClosePositionReason(transaction) {
       `I plan to ${action} ${security} to close the existing position as a stop-loss and limit further downside exposure.`,
       `I intend to ${action} ${security} to exit the loss-making position and reduce the fund's downside risk.`,
       `I will ${action} ${security} to close the existing position under the fund's stop-loss discipline and contain further risk.`,
-      `I plan to ${action} ${security} to limit the loss on the existing position and reduce the fund's exposure to the stock.`,
+      `I plan to ${action} ${security} to limit the loss on the existing position and reduce the fund's ${exposureLabel}.`,
       `I intend to ${action} ${security} to exit the existing position, control the loss, and lower the fund's risk exposure.`
     ]);
   }
 
   return selectCloseReasonVariant(transaction, [
-    `I plan to ${action} ${security} to close the existing position and reduce the fund's exposure to the stock.`,
-    `I intend to ${action} ${security} to exit the existing position and rebalance the fund's exposure to the stock.`,
-    `I will ${action} ${security} to close the existing position and bring the fund's exposure back in line with the current strategy.`,
-    `I plan to ${action} ${security} to unwind the existing position and lower the fund's exposure to the stock.`,
+    `I plan to ${action} ${security} to close the existing position and reduce the fund's ${exposureLabel}.`,
+    `I intend to ${action} ${security} to exit the existing position and rebalance the fund's ${exposureLabel}.`,
+    `I will ${action} ${security} to close the existing position and bring the fund's ${exposureLabel} back in line with the current strategy.`,
+    `I plan to ${action} ${security} to unwind the existing position and lower the fund's ${exposureLabel}.`,
     `I intend to ${action} ${security} to exit the existing position as part of the fund's portfolio adjustment.`
   ]);
 }
