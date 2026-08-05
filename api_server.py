@@ -542,14 +542,14 @@ def general_stock_thesis(context: dict, is_buy: bool) -> tuple[str, str]:
 
     themes = [
         (
-            ("rare earth", "critical mineral", "magnet manufacturing", "magnetics"),
+            ("mp materials", "rare earth", "critical mineral", "magnet manufacturing", "magnetics"),
             "the rare-earth and critical-materials supply chain",
             "I believe long-term demand from advanced manufacturing, electrification, and defence applications can support the company's business outlook and provide additional diversification to the fund.",
             "I believe commodity-price volatility, operational execution requirements, and policy dependence can create downside risk for the company's business outlook.",
             "I will monitor commodity-price volatility, operational execution, and policy-related risks.",
         ),
         (
-            ("basic materials", "mining", "metals", "chemical", "steel"),
+            ("basic materials", "materials", "mining", "metals", "chemical", "steel"),
             "the materials sector",
             "I believe long-term demand from industrial production, infrastructure, and supply-chain investment can support the company's business outlook and diversify the fund's sector exposure.",
             "I believe commodity-price movements, cyclical demand, and operating-cost pressure can create downside risk for the stock.",
@@ -649,7 +649,8 @@ def build_evidence_locked_stock_reason(item: dict, requested_evidence_id: str = 
         )
         return reason, evidence
 
-    exposure, general_view = general_stock_thesis(context, is_buy)
+    thesis_context = {**context, "company": company, "symbol": parse_symbol(security)}
+    exposure, general_view = general_stock_thesis(thesis_context, is_buy)
     general_purpose = (
         f"to gain exposure to {exposure}"
         if is_buy

@@ -6,7 +6,7 @@ This app converts uploaded Excel / CSV transaction sheets into RO compliance rep
 
 Current production behavior:
 
-- Current production version: `v2026.08.05.2`. The version is displayed beside the Settings button in the top band.
+- Current production version: `v2026.08.05.3`. The version is displayed beside the Settings button in the top band.
 
 - User uploads one or more Excel / CSV transaction files in the browser.
 - The app parses the first worksheet in each file, merges all rows, and previews editable transaction rows.
