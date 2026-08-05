@@ -449,10 +449,14 @@ def build_pretrade_stock_context(item: dict, fmp_api_key: str) -> dict:
     )
     fundamental = facts.get("fundamentalDataAvailableBeforeTradeDate") or {}
     technical = facts.get("technicalDataAvailableBeforeTradeDate") or {}
+    business = facts.get("business") or {}
 
     context = {
         "company": facts.get("trade", {}).get("company") or item.get("description") or symbol,
         "symbol": symbol,
+        "sector": business.get("sector"),
+        "industry": business.get("industry"),
+        "businessDescription": business.get("description"),
         "dataCutoffDate": data_cutoff_date,
         "evidence": build_pretrade_evidence(fundamental, technical, data_cutoff_date),
     }
@@ -530,6 +534,97 @@ def select_locked_evidence(item: dict, requested_evidence_id: str = "") -> dict 
     return None
 
 
+def general_stock_thesis(context: dict, is_buy: bool) -> tuple[str, str]:
+    business_text = " ".join(
+        str(context.get(key) or "")
+        for key in ("company", "sector", "industry", "businessDescription")
+    ).lower()
+
+    themes = [
+        (
+            ("rare earth", "critical mineral", "magnet manufacturing", "magnetics"),
+            "the rare-earth and critical-materials supply chain",
+            "I believe long-term demand from advanced manufacturing, electrification, and defence applications can support the company's business outlook and provide additional diversification to the fund.",
+            "I believe commodity-price volatility, operational execution requirements, and policy dependence can create downside risk for the company's business outlook.",
+            "I will monitor commodity-price volatility, operational execution, and policy-related risks.",
+        ),
+        (
+            ("basic materials", "mining", "metals", "chemical", "steel"),
+            "the materials sector",
+            "I believe long-term demand from industrial production, infrastructure, and supply-chain investment can support the company's business outlook and diversify the fund's sector exposure.",
+            "I believe commodity-price movements, cyclical demand, and operating-cost pressure can create downside risk for the stock.",
+            "I will monitor commodity prices, production execution, and regulatory risk.",
+        ),
+        (
+            ("semiconductor", "software", "technology", "computer", "electronic"),
+            "technology and digital infrastructure",
+            "I believe continued demand for computing, digitalisation, and enterprise technology can support the company's medium-to-long-term business outlook and diversify the fund's sector exposure.",
+            "I believe competitive pressure, product-cycle risk, and demanding growth expectations can create downside risk for the stock.",
+            "I will monitor product execution, competitive conditions, and valuation risk.",
+        ),
+        (
+            ("healthcare", "biotechnology", "pharmaceutical", "medical"),
+            "healthcare innovation",
+            "I believe demand for new treatments and healthcare solutions can support the company's medium-to-long-term opportunity and broaden the fund's healthcare exposure.",
+            "I believe clinical, regulatory, and commercialisation risks can create downside risk for the company's outlook.",
+            "I will monitor regulatory progress, product execution, and funding risk.",
+        ),
+        (
+            ("energy", "oil", "gas", "uranium", "solar", "renewable"),
+            "the energy sector",
+            "I believe changing energy demand and continued investment in supply capacity can support the company's medium-to-long-term opportunity and diversify the fund's industry exposure.",
+            "I believe commodity-price movements, project execution, and changes in energy demand can create downside risk for the stock.",
+            "I will monitor commodity prices, operating execution, and policy risk.",
+        ),
+        (
+            ("financial", "bank", "insurance", "asset management"),
+            "the financial sector",
+            "I believe the company's financial-services franchise can participate in long-term economic and capital-market activity while broadening the fund's sector exposure.",
+            "I believe credit conditions, interest-rate changes, and market volatility can create downside risk for the company's outlook.",
+            "I will monitor asset quality, funding conditions, and regulatory risk.",
+        ),
+        (
+            ("consumer", "retail", "automotive", "restaurant", "apparel"),
+            "the consumer sector",
+            "I believe the company's consumer franchise can benefit from medium-to-long-term demand in its market and provide additional diversification to the fund.",
+            "I believe changing consumer demand, competitive pressure, and margin risk can create downside risk for the stock.",
+            "I will monitor demand trends, operating margins, and competitive conditions.",
+        ),
+        (
+            ("industrial", "aerospace", "defense", "transportation", "construction"),
+            "industrial activity and infrastructure investment",
+            "I believe long-term investment in infrastructure, manufacturing, and supply-chain capacity can support the company's business outlook and diversify the fund's sector exposure.",
+            "I believe cyclical demand, cost pressure, and execution risk can create downside risk for the company's outlook.",
+            "I will monitor order demand, cost control, and operational execution.",
+        ),
+        (
+            ("communication", "media", "telecom", "internet"),
+            "communications and digital services",
+            "I believe continued demand for connectivity, digital content, and online services can support the company's business outlook and broaden the fund's exposure.",
+            "I believe competition, customer-acquisition costs, and changing user demand can create downside risk for the stock.",
+            "I will monitor user trends, competitive conditions, and regulatory risk.",
+        ),
+        (
+            ("real estate", "reit", "property"),
+            "the real-estate sector",
+            "I believe the company's property exposure can contribute income and diversification across the fund's portfolio over the medium to long term.",
+            "I believe financing costs, occupancy trends, and asset-value changes can create downside risk for the stock.",
+            "I will monitor interest rates, occupancy, and refinancing risk.",
+        ),
+    ]
+
+    for keywords, exposure, buy_view, sell_view, risk in themes:
+        if any(keyword in business_text for keyword in keywords):
+            return exposure, f"{buy_view if is_buy else sell_view} {risk}"
+
+    exposure = "the company's industry and long-term development"
+    if is_buy:
+        view = "I believe the company's business profile offers medium-to-long-term participation in its industry and can provide additional diversification to the fund."
+    else:
+        view = "I believe industry pressure and company execution risks can create downside risk for the stock."
+    return exposure, f"{view} I will monitor operating execution, industry conditions, and market risk."
+
+
 def build_evidence_locked_stock_reason(item: dict, requested_evidence_id: str = "") -> tuple[str, dict | None]:
     if str(item.get("kind", "")).lower() != "stock" or not is_open_position_type(item.get("type", "")):
         return "", None
@@ -554,10 +649,13 @@ def build_evidence_locked_stock_reason(item: dict, requested_evidence_id: str = 
         )
         return reason, evidence
 
-    reason = (
-        f"I plan to {action} {position_name} {purpose}. "
-        "No dated company-specific evidence supporting this trade direction passed the evidence lock, so I am not relying on an unverified catalyst in this record."
+    exposure, general_view = general_stock_thesis(context, is_buy)
+    general_purpose = (
+        f"to gain exposure to {exposure}"
+        if is_buy
+        else f"to establish or increase short exposure to {exposure}"
     )
+    reason = f"I plan to {action} {position_name} {general_purpose}. {general_view}"
     return reason, None
 
 
