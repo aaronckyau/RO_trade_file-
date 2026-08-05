@@ -1134,21 +1134,47 @@ function buildClosePositionReason(transaction) {
 
   const action = normalizeReportTradeType(transaction.type);
   const security = transaction.security || "the security";
-  const company = cleanText(transaction.description);
-  const positionName = company && company !== security ? `${company} (${security})` : security;
   const realisedProfit = parseSignedReportNumber(transaction.realised);
 
   if (realisedProfit !== null && realisedProfit > 0) {
-    const amount = formatAbsoluteMoney(realisedProfit, transaction.ccy);
-    return `I plan to ${action} ${positionName} to close the existing position and take profit. The submitted data shows a realised profit of ${amount}, so I am crystallising gains and reducing the fund's exposure to the stock.`;
+    return selectCloseReasonVariant(transaction, [
+      `I plan to ${action} ${security} to close the existing position, take profit, and reduce the fund's exposure to the stock.`,
+      `I intend to ${action} ${security} to realise gains on the existing position and lower the fund's exposure to the stock.`,
+      `I will ${action} ${security} to exit the existing position at a profit and scale back the fund's exposure to the stock.`,
+      `I plan to ${action} ${security} to secure the gain on the existing position while reducing the fund's exposure to the stock.`,
+      `I intend to ${action} ${security} to take profit on the existing position and bring down the fund's exposure to the stock.`
+    ]);
   }
 
   if (realisedProfit !== null && realisedProfit < 0) {
-    const amount = formatAbsoluteMoney(realisedProfit, transaction.ccy);
-    return `I plan to ${action} ${positionName} to close the existing position as a stop-loss. The submitted data shows a realised loss of ${amount}, so I am limiting further downside and reducing the fund's exposure to the stock.`;
+    return selectCloseReasonVariant(transaction, [
+      `I plan to ${action} ${security} to close the existing position as a stop-loss and limit further downside exposure.`,
+      `I intend to ${action} ${security} to exit the loss-making position and reduce the fund's downside risk.`,
+      `I will ${action} ${security} to close the existing position under the fund's stop-loss discipline and contain further risk.`,
+      `I plan to ${action} ${security} to limit the loss on the existing position and reduce the fund's exposure to the stock.`,
+      `I intend to ${action} ${security} to exit the existing position, control the loss, and lower the fund's risk exposure.`
+    ]);
   }
 
-  return `I plan to ${action} ${positionName} to exit or reduce the fund's current exposure to the stock. As the submitted data does not show a positive or negative realised result, I will assess the exit against the original company-specific investment rationale.`;
+  return selectCloseReasonVariant(transaction, [
+    `I plan to ${action} ${security} to close the existing position and reduce the fund's exposure to the stock.`,
+    `I intend to ${action} ${security} to exit the existing position and rebalance the fund's exposure to the stock.`,
+    `I will ${action} ${security} to close the existing position and bring the fund's exposure back in line with the current strategy.`,
+    `I plan to ${action} ${security} to unwind the existing position and lower the fund's exposure to the stock.`,
+    `I intend to ${action} ${security} to exit the existing position as part of the fund's portfolio adjustment.`
+  ]);
+}
+
+function selectCloseReasonVariant(transaction, variants) {
+  const key = [transaction?.deal, transaction?.security, transaction?.tradeDate, transaction?.type]
+    .map(cleanText)
+    .join("|");
+  let hash = 2166136261;
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= key.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return variants[(hash >>> 0) % variants.length];
 }
 
 function isClosePositionTrade(type) {
@@ -1163,14 +1189,6 @@ function parseSignedReportNumber(value) {
   const number = Number(text.replace(/[()]/g, ""));
   if (!Number.isFinite(number)) return null;
   return isParenthesized ? -Math.abs(number) : number;
-}
-
-function formatAbsoluteMoney(value, ccy) {
-  const currency = cleanText(ccy) || "USD";
-  return `${currency} ${Math.abs(value).toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })}`;
 }
 
 function formatReportQuantity(value) {

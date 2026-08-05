@@ -63,6 +63,13 @@ body {
   gap: 10px;
 }
 
+.app-version {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 h1 {
   margin: 0 0 6px;
   font-size: 30px;
