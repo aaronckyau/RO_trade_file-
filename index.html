@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>RO 交易指令 PDF 產生器</title>
-    <link rel="stylesheet" href="styles.css?v=20260805.4" />
+    <link rel="stylesheet" href="styles.css?v=20260806.1" />
   </head>
   <body>
     <main class="app-shell">
@@ -15,7 +15,7 @@
           <p>上傳一份或多份交易 Excel、檢視或修改表格，設定簽名與日期後，匯出每日 pre-trade / post-trade 報告。</p>
         </div>
         <div class="top-actions">
-          <span class="app-version" aria-label="Application version">v2026.08.05.4</span>
+          <span class="app-version" aria-label="Application version">v2026.08.06.1</span>
           <button id="settingsBtn" type="button" class="ghost-btn">設定</button>
         </div>
       </section>
@@ -161,6 +161,28 @@
             <textarea id="notesInput" rows="4" placeholder="Optional text shown in the RO Comments field"></textarea>
             <p class="helper-text">The PDF field remains editable after export. Word output can be edited normally.</p>
           </div>
+
+          <div class="control-block futures-registry-block">
+            <div class="registry-heading">
+              <label for="futuresOverridesInput">Futures Product Codes</label>
+              <span id="futuresRegistryMeta" class="registry-meta">Loading official mappings...</span>
+            </div>
+            <div id="unmappedFuturesCodes" class="mapping-alert hidden"></div>
+            <textarea
+              id="futuresOverridesInput"
+              rows="4"
+              spellcheck="false"
+              placeholder="ROOT | Product Name | Market Exposure | Volatility Risk | Exchange"
+            ></textarea>
+            <div class="registry-table-wrap">
+              <table class="registry-table" aria-label="Supported futures product codes">
+                <thead>
+                  <tr><th>Code</th><th>Product</th><th>Market Exposure</th><th>Exchange</th><th>Source</th></tr>
+                </thead>
+                <tbody id="futuresRegistryBody"></tbody>
+              </table>
+            </div>
+          </div>
         </section>
 
         <div class="settings-actions">
@@ -173,6 +195,6 @@
     <script src="vendor/xlsx.full.min.js"></script>
     <script src="vendor/jspdf.umd.min.js"></script>
     <script src="vendor/jspdf.plugin.autotable.min.js"></script>
-    <script src="app.js?v=20260805.4"></script>
+    <script src="app.js?v=20260806.1"></script>
   </body>
 </html>

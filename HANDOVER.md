@@ -6,7 +6,7 @@ This app converts uploaded Excel / CSV transaction sheets into RO compliance rep
 
 Current production behavior:
 
-- Current production version: `v2026.08.05.4`. The version is displayed beside the Settings button in the top band.
+- Current application version: `v2026.08.06.1`. The version is displayed beside the Settings button in the top band. Production remains on the previous version until this change is explicitly deployed.
 
 - User uploads one or more Excel / CSV transaction files in the browser.
 - The app parses the first worksheet in each file, merges all rows, and previews editable transaction rows.
@@ -28,7 +28,7 @@ Current production behavior:
 - All report text in the generated pre/post templates is English.
 - Pre-Trade `Reason` is deterministic for closing positions: positive `REALISED_PROFIT` produces a concise take-profit explanation, negative `REALISED_PROFIT` produces a concise stop-loss explanation, and zero/blank produces a neutral exposure-exit explanation. Closing reasons do not display the realised amount, quantity, or proposed price. A stable variant is selected from the Deal No., security, trade date, and transaction type so wording differs across trades without changing when the same trade is exported again.
 - Pre-Trade reports use the financial terms `BUY` and `SELL` (never `sale`), display quantity as an absolute positive value, and display Proposed Price as a one-decimal range calculated from -1% to +1% around the source price without printing the percentage wording. Open-position Investment Supporting text is written in the fund portfolio manager's first-person voice as two or three natural professional sentences about the security; closing-position text uses the concise deterministic wording described above. Neither repeats quantity or proposed price. Open-stock facts are evidence-locked: client-supplied context is discarded, each server-built fact carries a `filingDate` or `asOfDate` no later than the day before the trade date, Gemini can only select a supplied evidence ID, and the backend composes the final reason from that exact statement. Invalid, future-dated, or invented evidence is ignored. When no eligible evidence is available, the backend writes a general company/sector thesis and relevant risk factors instead of displaying an evidence failure disclaimer or inventing an event, metric, or catalyst. The API does not expose data-provider or JSON field names in the report.
-- Opening futures use deterministic `Directional Long` wording for BUY OPEN and `Directional Short` wording for SELL OPEN; they are never described as hedges unless a separate future strategy-purpose control is introduced later. MNQ/NQ, MES/ES, M2K/RTY, and MYM/YM map to their corresponding equity indices. Futures reasons describe index exposure, portfolio beta, leverage, volatility, margin, and contract-expiry risk without repeating quantity or proposed price.
+- Opening futures use deterministic `Directional Long` wording for BUY OPEN and `Directional Short` wording for SELL OPEN; they are never described as hedges unless a separate future strategy-purpose control is introduced later. Futures contract roots are parsed from the right-hand expiry suffix and resolved by exact match against the server-side registry in `futures_registry.py`. Product variants remain distinct (`MHG` Micro Copper, `HG` Copper, and `QC` E-mini Copper). Gemini cannot replace a mapped root or product name. Unknown roots fail closed and block the affected pre-trade export until a validated override is entered in Settings. Settings displays the supported registry and accepts overrides in `ROOT | Product Name | Market Exposure | Volatility Risk | Exchange` format. Futures reasons use the canonical product name, market exposure, and risk label without repeating quantity or proposed price.
 
 ## Output Templates
 
@@ -138,6 +138,7 @@ Relevant endpoints:
 
 - `/RO_transaction/api/health`
 - `/RO_transaction/api/classify-transactions`
+- `/RO_transaction/api/futures-products`
 - `/RO_transaction/api/strategy-report`
 - `/RO_transaction/api/pretrade-reasons`
 

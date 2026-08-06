@@ -70,6 +70,10 @@ const state = {
   executedSignature: "",
   roSignature: "",
   defaultChecklistChecked: true,
+  futuresRegistry: [],
+  futuresRegistryVersion: "",
+  futuresOverrides: [],
+  classificationPromise: Promise.resolve(),
   activeMainTab: "transaction",
   transactionTypeSort: "none",
   strategyTypeSort: "none"
@@ -104,6 +108,10 @@ const els = {
   roSigPreview: document.getElementById("roSigPreview"),
   defaultChecklistCheckedInput: document.getElementById("defaultChecklistCheckedInput"),
   notesInput: document.getElementById("notesInput"),
+  futuresOverridesInput: document.getElementById("futuresOverridesInput"),
+  futuresRegistryMeta: document.getElementById("futuresRegistryMeta"),
+  futuresRegistryBody: document.getElementById("futuresRegistryBody"),
+  unmappedFuturesCodes: document.getElementById("unmappedFuturesCodes"),
   rowCount: document.getElementById("rowCount"),
   pageCount: document.getElementById("pageCount"),
   downloadPdfBtn: document.getElementById("downloadPdfBtn"),
@@ -128,9 +136,22 @@ const els = {
 function init() {
   els.settingsBtn.addEventListener("click", () => showPage("settings"));
   els.backMainBtn.addEventListener("click", () => showPage("main"));
-  els.saveSettingsBtn.addEventListener("click", () => {
-    els.settingsStatus.textContent = "設定已儲存，會套用到下一次 PDF 匯出。";
-    showPage("main");
+  els.saveSettingsBtn.addEventListener("click", async () => {
+    try {
+      state.futuresOverrides = parseFuturesOverrides();
+      clearFuturesReasons();
+      renderFuturesRegistry();
+      if (state.transactions.length) {
+        state.classificationPromise = classifyTransactions();
+        await state.classificationPromise;
+      }
+      els.settingsStatus.textContent = "設定已儲存，會套用到下一次 PDF 匯出。";
+      els.settingsStatus.style.color = "";
+      showPage("main");
+    } catch (error) {
+      els.settingsStatus.textContent = error.message || "Futures product override is invalid.";
+      els.settingsStatus.style.color = "#b91c1c";
+    }
   });
   els.excelInput.addEventListener("change", onExcelUpload);
   els.downloadPdfBtn.addEventListener("click", generatePdf);
@@ -154,6 +175,7 @@ function init() {
 
   renderBlankState();
   renderMainTabs();
+  loadFuturesRegistry();
 }
 
 function showPage(page) {
@@ -214,7 +236,7 @@ async function parseUploadedWorkbooks(files) {
     els.downloadPdfBtn.disabled = !transactions.length;
     els.downloadWordBtn.disabled = !transactions.length;
     setStatus(`已從 ${sourceFiles.length} 個檔案載入 ${transactions.length} 筆交易。產生 report 前可以直接修改表格內容。`);
-    classifyTransactions();
+    state.classificationPromise = classifyTransactions();
   } catch (error) {
     state.transactions = [];
     state.sourceFile = "";
@@ -529,7 +551,14 @@ function renderKindCell(transaction, sourceIndex) {
   const select = options.map((opt) =>
     `<option value="${opt.value}"${opt.value === current ? " selected" : ""}>${opt.label}</option>`
   ).join("");
-  return `<td><select class="kind-select" data-kind-index="${sourceIndex}">${select}</select></td>`;
+  let mapping = "";
+  if (current === "future") {
+    const product = transaction.futuresProduct || {};
+    mapping = product.mappingStatus === "mapped"
+      ? `<span class="mapping-status is-mapped">${escapeHtml(product.productRoot)} · ${escapeHtml(product.productName)}</span>`
+      : `<span class="mapping-status is-unmapped">Mapping required</span>`;
+  }
+  return `<td><select class="kind-select" data-kind-index="${sourceIndex}">${select}</select>${mapping}</td>`;
 }
 
 function bindKindSelects() {
@@ -638,6 +667,107 @@ function canGenerateStrategyReport(transaction) {
   return isOpenPosition(transaction) && resolvedKind(transaction) === "stock";
 }
 
+function getFuturesProductsApiUrl() {
+  return window.location.pathname.startsWith("/RO_transaction/")
+    ? "/RO_transaction/api/futures-products"
+    : "/api/futures-products";
+}
+
+async function loadFuturesRegistry() {
+  try {
+    const response = await fetch(getFuturesProductsApiUrl());
+    if (!response.ok) throw new Error("registry request failed");
+    const data = await response.json();
+    state.futuresRegistry = Array.isArray(data.products) ? data.products : [];
+    state.futuresRegistryVersion = cleanText(data.registryVersion);
+    renderFuturesRegistry();
+  } catch {
+    els.futuresRegistryMeta.textContent = "Official mappings unavailable";
+    els.futuresRegistryMeta.style.color = "#b91c1c";
+  }
+}
+
+function parseFuturesOverrides() {
+  const lines = String(els.futuresOverridesInput.value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length > 200) throw new Error("A maximum of 200 futures product overrides is allowed.");
+
+  return lines.map((line, index) => {
+    const parts = line.split("|").map((part) => part.trim());
+    if (parts.length < 3 || parts.length > 5) {
+      throw new Error(`Futures override line ${index + 1} must contain 3 to 5 fields separated by |.`);
+    }
+    const [productRoot, productName, marketExposure, volatilityRisk = "market volatility", exchange = "CUSTOM"] = parts;
+    if (!/^[A-Z0-9]{1,8}$/i.test(productRoot)) {
+      throw new Error(`Invalid futures product root on line ${index + 1}.`);
+    }
+    if (!productName || !marketExposure) {
+      throw new Error(`Futures override line ${index + 1} requires a product name and market exposure.`);
+    }
+    return {
+      productRoot: productRoot.toUpperCase(),
+      productName,
+      marketExposure,
+      volatilityRisk: volatilityRisk || "market volatility",
+      exchange: (exchange || "CUSTOM").toUpperCase()
+    };
+  });
+}
+
+function renderFuturesRegistry() {
+  const official = state.futuresRegistry.map((product) => ({ ...product, sourceLabel: "Official" }));
+  const overrides = state.futuresOverrides.map((product) => ({ ...product, sourceLabel: "Setting" }));
+  const byRoot = new Map(official.map((product) => [product.productRoot, product]));
+  overrides.forEach((product) => byRoot.set(product.productRoot, product));
+  const products = Array.from(byRoot.values()).sort((a, b) =>
+    String(a.productRoot).localeCompare(String(b.productRoot))
+  );
+
+  els.futuresRegistryMeta.textContent = state.futuresRegistryVersion
+    ? `${products.length} mappings · registry ${state.futuresRegistryVersion}`
+    : `${products.length} mappings`;
+  els.futuresRegistryMeta.style.color = "";
+  els.futuresRegistryBody.innerHTML = products.map((product) => `
+    <tr>
+      <td><strong>${escapeHtml(product.productRoot)}</strong></td>
+      <td>${escapeHtml(product.productName)}</td>
+      <td>${escapeHtml(product.marketExposure)}</td>
+      <td>${escapeHtml(product.exchange)}</td>
+      <td class="registry-source">${escapeHtml(product.sourceLabel)}</td>
+    </tr>
+  `).join("");
+  renderUnmappedFuturesCodes();
+}
+
+function renderUnmappedFuturesCodes() {
+  const roots = [...new Set(state.transactions
+    .filter((transaction) => resolvedKind(transaction) === "future" && transaction.futuresProduct?.mappingStatus !== "mapped")
+    .map((transaction) => cleanText(transaction.futuresProduct?.productRoot) || cleanText(transaction.security))
+    .filter(Boolean))];
+  els.unmappedFuturesCodes.classList.toggle("hidden", roots.length === 0);
+  els.unmappedFuturesCodes.textContent = roots.length
+    ? `Mapping required before Pre-Trade export: ${roots.join(", ")}`
+    : "";
+}
+
+function clearFuturesReasons() {
+  state.transactions.forEach((transaction) => {
+    if (resolvedKind(transaction) === "future" && isOpenPosition(transaction)) {
+      transaction.reason = "";
+      transaction.futuresMappingError = "";
+    }
+  });
+}
+
+function applyFuturesProduct(transaction, product) {
+  transaction.futuresProduct = product && typeof product === "object" ? product : {};
+  transaction.futuresMappingError = transaction.futuresProduct.mappingStatus === "mapped"
+    ? ""
+    : `Futures product code ${transaction.futuresProduct.productRoot || transaction.security || "[blank]"} is not mapped.`;
+}
+
 async function classifyTransactions() {
   const items = state.transactions.map((t) => ({ security: t.security, description: t.description }));
   if (!items.length) return;
@@ -646,7 +776,7 @@ async function classifyTransactions() {
     const response = await fetch(getClassifyApiUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ transactions: items })
+      body: JSON.stringify({ transactions: items, futuresOverrides: state.futuresOverrides })
     });
     if (!response.ok) throw new Error("classify failed");
     const data = await response.json();
@@ -655,12 +785,20 @@ async function classifyTransactions() {
       if (!transaction) return;
       transaction.kind = row.kind;
       transaction.underlyingSymbol = row.underlyingSymbol || "";
+      applyFuturesProduct(transaction, row.futuresProduct);
     });
     renderStrategyTable();
-    setStrategyStatus("已完成型別判斷。可在「型別」欄手動修正。");
+    renderUnmappedFuturesCodes();
+    const unmapped = state.transactions.filter((transaction) =>
+      resolvedKind(transaction) === "future" && transaction.futuresProduct?.mappingStatus !== "mapped"
+    ).length;
+    setStrategyStatus(unmapped
+      ? `已完成型別判斷；${unmapped} 筆 futures code 需要在 Settings 設定 mapping。`
+      : "已完成型別判斷。可在「型別」欄手動修正。", unmapped > 0);
   } catch {
     // Keep rule-based fallback; do not block the user.
     setStrategyStatus("AI 型別判斷未完成，改用代號規則判斷。可在「型別」欄手動修正。", true);
+    renderUnmappedFuturesCodes();
   }
 }
 
@@ -1059,6 +1197,19 @@ async function ensurePreTradeReasons() {
 }
 
 async function ensurePreTradeReasonsFor(candidates) {
+  await state.classificationPromise;
+  const unmappedFutures = candidates.filter(({ transaction }) =>
+    resolvedKind(transaction) === "future"
+      && isOpenPosition(transaction)
+      && transaction.futuresProduct?.mappingStatus !== "mapped"
+  );
+  if (unmappedFutures.length) {
+    const roots = [...new Set(unmappedFutures.map(({ transaction }) =>
+      cleanText(transaction.futuresProduct?.productRoot) || cleanText(transaction.security) || "[blank]"
+    ))];
+    throw new Error(`Futures product mapping required for ${roots.join(", ")}. Add the code in Settings before export.`);
+  }
+
   candidates.forEach(({ transaction }) => {
     const deterministicReason = buildClosePositionReason(transaction) || buildDirectionalFuturesReason(transaction);
     if (deterministicReason) transaction.reason = deterministicReason;
@@ -1088,18 +1239,21 @@ async function ensurePreTradeReasonsFor(candidates) {
             counterpart: transaction.counterpart,
             kind: resolvedKind(transaction) || "unsupported",
             underlyingSymbol: transaction.underlyingSymbol || ""
-          }))
+          })),
+          futuresOverrides: state.futuresOverrides
         })
       });
       if (!response.ok) throw new Error("reason generation failed");
       const data = await response.json();
       (data.results || []).forEach((row) => {
         const transaction = state.transactions[row.index];
-        if (transaction && row.reason) {
-          transaction.reason = normalizeInvestmentSupportingVoice(row.reason);
-          transaction.reasonEvidenceId = cleanText(row.evidenceId);
-          transaction.reasonEvidenceDate = cleanText(row.evidenceDate);
-        }
+        if (!transaction) return;
+        if (row.futuresProduct) applyFuturesProduct(transaction, row.futuresProduct);
+        if (row.error) transaction.futuresMappingError = cleanText(row.error);
+        if (!row.reason) return;
+        transaction.reason = normalizeInvestmentSupportingVoice(row.reason);
+        transaction.reasonEvidenceId = cleanText(row.evidenceId);
+        transaction.reasonEvidenceDate = cleanText(row.evidenceDate);
       });
     }
   } catch {
@@ -1121,6 +1275,7 @@ function fallbackPreTradeReason(transaction) {
   if (closeReason) return closeReason;
   const futuresReason = buildDirectionalFuturesReason(transaction);
   if (futuresReason) return futuresReason;
+  if (resolvedKind(transaction) === "future") return "";
 
   const action = normalizeReportTradeType(transaction.type);
   const security = transaction.security || "the security";
@@ -1135,25 +1290,20 @@ function fallbackPreTradeReason(transaction) {
 function buildDirectionalFuturesReason(transaction) {
   if (resolvedKind(transaction) !== "future" || !isOpenPosition(transaction)) return "";
 
+  const product = transaction.futuresProduct || {};
+  if (product.mappingStatus !== "mapped") return "";
+
   const action = normalizeReportTradeType(transaction.type);
   const isLong = action === "BUY";
   const direction = isLong ? "Directional Long" : "Directional Short";
   const security = cleanText(transaction.security) || "the futures contract";
-  const symbol = security.split(/\s+/)[0].replace(/[^A-Za-z0-9.-]/g, "").toUpperCase();
-  const profiles = [
-    { roots: ["MNQ", "NQ"], market: "the Nasdaq-100", exposure: "large-cap growth and technology equities", volatility: "index volatility" },
-    { roots: ["MES", "ES"], market: "the S&P 500", exposure: "broad U.S. large-cap equities", volatility: "broad-market volatility" },
-    { roots: ["M2K", "RTY"], market: "the Russell 2000", exposure: "U.S. small-cap equities", volatility: "small-cap volatility" },
-    { roots: ["MYM", "YM"], market: "the Dow Jones Industrial Average", exposure: "U.S. blue-chip equities", volatility: "index volatility" }
-  ];
-  const profile = profiles.find((candidate) => candidate.roots.some((root) => symbol.startsWith(root)));
-  const market = profile?.market || cleanText(transaction.underlyingSymbol) || cleanText(transaction.description) || "the underlying market";
-  const exposure = profile?.exposure || "the relevant futures market";
-  const volatility = profile?.volatility || "market volatility";
+  const productLabel = `${cleanText(product.productName)} (${cleanText(product.productRoot)})`;
+  const exposure = cleanText(product.marketExposure);
+  const volatility = cleanText(product.volatilityRisk) || "market volatility";
   const portfolioEffect = isLong
-    ? `The contract provides a liquid and capital-efficient way to increase participation in ${exposure} and adjust portfolio beta without changing individual holdings.`
-    : `The contract provides a liquid and capital-efficient way to express a cautious view on ${exposure} and adjust portfolio beta without changing individual holdings.`;
-  return `I plan to ${action} ${security} to establish ${direction} exposure to ${market}. ${portfolioEffect} I will monitor leverage, ${volatility}, margin requirements, and contract expiry.`;
+    ? `The contract provides a liquid and capital-efficient way to increase participation in ${exposure} without changing individual holdings.`
+    : `The contract provides a liquid and capital-efficient way to express a cautious view on ${exposure} without changing individual holdings.`;
+  return `I plan to ${action} ${security} to establish ${direction} exposure through ${productLabel}. ${portfolioEffect} I will monitor leverage, ${volatility}, margin requirements, and contract expiry.`;
 }
 
 function buildClosePositionReason(transaction) {

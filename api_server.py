@@ -16,6 +16,8 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from statistics import mean
 
+from futures_registry import REGISTRY_VERSION, public_registry, resolve_futures_product
+
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("RO_TRANSACTION_API_PORT", "8788"))
@@ -660,45 +662,35 @@ def build_evidence_locked_stock_reason(item: dict, requested_evidence_id: str = 
     return reason, None
 
 
-def build_directional_futures_reason(item: dict) -> str:
+def build_directional_futures_reason(item: dict, futures_overrides: object = None) -> str:
     if str(item.get("kind", "")).lower() != "future" or not is_open_position_type(item.get("type", "")):
         return ""
 
     security = str(item.get("security") or "the futures contract").strip()
-    symbol = parse_symbol(security)
+    product = resolve_futures_product(security, futures_overrides)
+    if product["mappingStatus"] != "mapped":
+        return ""
+
     is_buy = "buy" in str(item.get("type", "")).lower()
     action = "BUY" if is_buy else "SELL"
     direction = "Directional Long" if is_buy else "Directional Short"
-
-    profiles = [
-        (("MNQ", "NQ"), "the Nasdaq-100", "large-cap growth and technology equities", "index volatility"),
-        (("MES", "ES"), "the S&P 500", "broad U.S. large-cap equities", "broad-market volatility"),
-        (("M2K", "RTY"), "the Russell 2000", "U.S. small-cap equities", "small-cap volatility"),
-        (("MYM", "YM"), "the Dow Jones Industrial Average", "U.S. blue-chip equities", "index volatility"),
-    ]
-    market_name = str(item.get("underlyingSymbol") or item.get("description") or "the underlying market").strip()
-    market_exposure = "the relevant futures market"
-    volatility_risk = "market volatility"
-    for roots, candidate_market, candidate_exposure, candidate_volatility in profiles:
-        if any(symbol.startswith(root) for root in roots):
-            market_name = candidate_market
-            market_exposure = candidate_exposure
-            volatility_risk = candidate_volatility
-            break
+    product_label = f"{product['productName']} ({product['productRoot']})"
+    market_exposure = product["marketExposure"]
+    volatility_risk = product["volatilityRisk"]
 
     if is_buy:
         portfolio_effect = (
             f"The contract provides a liquid and capital-efficient way to increase participation in "
-            f"{market_exposure} and adjust portfolio beta without changing individual holdings."
+            f"{market_exposure} without changing individual holdings."
         )
     else:
         portfolio_effect = (
             f"The contract provides a liquid and capital-efficient way to express a cautious view on "
-            f"{market_exposure} and adjust portfolio beta without changing individual holdings."
+            f"{market_exposure} without changing individual holdings."
         )
 
     return (
-        f"I plan to {action} {security} to establish {direction} exposure to {market_name}. "
+        f"I plan to {action} {security} to establish {direction} exposure through {product_label}. "
         f"{portfolio_effect} "
         f"I will monitor leverage, {volatility_risk}, margin requirements, and contract expiry."
     )
@@ -935,7 +927,7 @@ def pdf_bytes(report: dict, facts: dict) -> bytes:
     return output.getvalue()
 
 
-def classify_transactions(items: list[dict], gemini_api_key: str) -> list[dict]:
+def classify_transactions(items: list[dict], gemini_api_key: str, futures_overrides: object = None) -> list[dict]:
     """Classify each row's security kind and underlying symbol with the LLM.
 
     The model only picks from a closed set of kinds and extracts a likely
@@ -1010,14 +1002,43 @@ def classify_transactions(items: list[dict], gemini_api_key: str) -> list[dict]:
     for index, item in enumerate(items):
         row = by_index.get(index, {})
         kind = row.get("kind")
-        if kind not in {"stock", "option", "future"}:
-            kind = security_kind(item.get("security", ""))  # rule-based fallback
+        rule_kind = security_kind(item.get("security", ""))
+        if rule_kind in {"stock", "option", "future"}:
+            kind = rule_kind
+        elif kind not in {"stock", "option", "future"}:
+            kind = rule_kind
         underlying = str(row.get("underlyingSymbol", "")).strip().upper()
-        results.append({"index": index, "kind": kind, "underlyingSymbol": underlying})
+        futures_product = resolve_futures_product(item.get("security", ""), futures_overrides)
+        text_hint = f"{item.get('security', '')} {item.get('description', '')}".lower()
+        is_future = (
+            kind == "future"
+            or " future" in f" {text_hint}"
+            or bool(futures_product.get("contractMonth"))
+        )
+        if is_future and futures_product["mappingStatus"] == "mapped":
+            kind = "future"
+            underlying = futures_product["marketDataSymbol"]
+        elif not is_future:
+            futures_product = {}
+            if kind == "stock":
+                underlying = parse_symbol(item.get("security", ""))
+        else:
+            kind = "future"
+            underlying = ""
+        results.append({
+            "index": index,
+            "kind": kind,
+            "underlyingSymbol": underlying,
+            "futuresProduct": futures_product,
+        })
     return results
 
 
-def generate_pretrade_reasons(items: list[dict], gemini_api_key: str) -> list[dict]:
+def generate_pretrade_reasons(
+    items: list[dict],
+    gemini_api_key: str,
+    futures_overrides: object = None,
+) -> list[dict]:
     rows = [
         {
             "index": item.get("index", index),
@@ -1093,9 +1114,28 @@ def generate_pretrade_reasons(items: list[dict], gemini_api_key: str) -> list[di
         except (TypeError, ValueError):
             index = position
         ai_row = ai_rows.get(index, {})
-        futures_reason = build_directional_futures_reason(item)
+        futures_product = resolve_futures_product(item.get("security", ""), futures_overrides)
+        if str(item.get("kind", "")).lower() == "future" and is_open_position_type(item.get("type", "")):
+            if futures_product["mappingStatus"] != "mapped":
+                root = futures_product.get("productRoot") or parse_symbol(item.get("security", ""))
+                results.append({
+                    "index": index,
+                    "reason": "",
+                    "evidenceId": "",
+                    "evidenceDate": "",
+                    "error": f"Futures product code {root or '[blank]'} is not mapped.",
+                    "futuresProduct": futures_product,
+                })
+                continue
+        futures_reason = build_directional_futures_reason(item, futures_overrides)
         if futures_reason:
-            results.append({"index": index, "reason": futures_reason, "evidenceId": "", "evidenceDate": ""})
+            results.append({
+                "index": index,
+                "reason": futures_reason,
+                "evidenceId": "",
+                "evidenceDate": "",
+                "futuresProduct": futures_product,
+            })
             continue
         locked_reason, selected_evidence = build_evidence_locked_stock_reason(
             item,
@@ -1122,6 +1162,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.rstrip("/") == "/RO_transaction/api/health":
             json_response(self, 200, {"ok": True})
+            return
+        if self.path.rstrip("/") == "/RO_transaction/api/futures-products":
+            json_response(self, 200, {
+                "registryVersion": REGISTRY_VERSION,
+                "products": public_registry(),
+            })
             return
         json_response(self, 404, {"error": "Not found"})
 
@@ -1178,7 +1224,11 @@ class Handler(BaseHTTPRequestHandler):
             env = load_env()
             if not env.get("GEMINI_API_KEY"):
                 raise RuntimeError("Server API keys are not configured.")
-            results = classify_transactions(items, env["GEMINI_API_KEY"])
+            results = classify_transactions(
+                items,
+                env["GEMINI_API_KEY"],
+                payload.get("futuresOverrides"),
+            )
             json_response(self, 200, {"results": results})
         except (ValueError, RuntimeError) as exc:
             json_response(self, 400, {"error": str(exc)})
@@ -1199,7 +1249,11 @@ class Handler(BaseHTTPRequestHandler):
             if not env.get("GEMINI_API_KEY"):
                 raise RuntimeError("Server API keys are not configured.")
             enriched_items = enrich_pretrade_reason_items(items, env.get("FMP_API_KEY", ""))
-            results = generate_pretrade_reasons(enriched_items, env["GEMINI_API_KEY"])
+            results = generate_pretrade_reasons(
+                enriched_items,
+                env["GEMINI_API_KEY"],
+                payload.get("futuresOverrides"),
+            )
             json_response(self, 200, {"results": results})
         except (ValueError, RuntimeError) as exc:
             json_response(self, 400, {"error": str(exc)})

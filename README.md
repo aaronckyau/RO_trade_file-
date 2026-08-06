@@ -7,8 +7,9 @@ Local web app for generating RO transaction order PDF forms from uploaded Excel 
 - Upload `.xlsx`, `.xls`, or `.csv` transaction files
 - Preview and edit transaction rows in the browser
 - Configure fund/entity name, executed-by details, RO review details, dates, signatures, and notes
-- Export a PDF with 20 transactions per page
-- Runs locally with static files; no backend upload is required
+- Export daily pre-trade and post-trade PDF or Word report bundles
+- Resolve supported futures contract roots through a server-side product registry
+- Block unknown futures codes until a validated Settings override is supplied
 
 ## Usage
 
@@ -23,6 +24,8 @@ Open:
 ```text
 http://127.0.0.1:8787/
 ```
+
+The API must also be available through `/RO_transaction/api/` in production. Its endpoints include health, transaction classification, pre-trade reasons, strategy reports, and the read-only futures product registry.
 
 ## Data Handling
 

@@ -3,9 +3,12 @@ outputs/
 *.xlsx
 *.xls
 *.csv
+!tests/fixtures/*.csv
 *.pdf
 *.jpeg
 *.jpg
 *.png
 *.tmp
 *.log
+__pycache__/
+*.pyc
