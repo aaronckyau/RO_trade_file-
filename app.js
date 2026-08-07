@@ -1318,8 +1318,8 @@ function buildDirectionalFuturesReason(transaction) {
   const exposure = cleanText(product.marketExposure);
   const volatility = cleanText(product.volatilityRisk) || "market volatility";
   const portfolioEffect = isLong
-    ? `The contract provides a liquid and capital-efficient way to increase participation in ${exposure} without changing individual holdings.`
-    : `The contract provides a liquid and capital-efficient way to express a cautious view on ${exposure} without changing individual holdings.`;
+    ? `The contract provides a liquid and capital-efficient way to increase participation in ${exposure}.`
+    : `The contract provides a liquid and capital-efficient way to express a cautious view on ${exposure}.`;
   return `I plan to ${action} ${security} to establish ${direction} exposure through ${productLabel}. ${portfolioEffect} I will monitor leverage, ${volatility}, margin requirements, and contract expiry.`;
 }
 

@@ -713,12 +713,12 @@ def build_directional_futures_reason(item: dict, futures_overrides: object = Non
     if is_buy:
         portfolio_effect = (
             f"The contract provides a liquid and capital-efficient way to increase participation in "
-            f"{market_exposure} without changing individual holdings."
+            f"{market_exposure}."
         )
     else:
         portfolio_effect = (
             f"The contract provides a liquid and capital-efficient way to express a cautious view on "
-            f"{market_exposure} without changing individual holdings."
+            f"{market_exposure}."
         )
 
     reason = (

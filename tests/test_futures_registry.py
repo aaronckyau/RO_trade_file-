@@ -151,6 +151,7 @@ class FuturesRegistryTests(unittest.TestCase):
         self.assertIn("indicated upward momentum", reason)
         self.assertIn("supporting the Directional Long position", reason)
         self.assertNotIn("company-specific", reason)
+        self.assertNotIn("without changing individual holdings", reason)
 
     def test_future_reason_rejects_same_day_technical_data(self):
         item = {
@@ -171,6 +172,7 @@ class FuturesRegistryTests(unittest.TestCase):
         reason = api_server.build_directional_futures_reason(item)
         self.assertNotIn("As of 2026-07-02", reason)
         self.assertIn("liquid and capital-efficient", reason)
+        self.assertNotIn("without changing individual holdings", reason)
 
     def test_sell_future_reason_uses_downward_signal(self):
         item = {
