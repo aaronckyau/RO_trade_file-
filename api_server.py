@@ -81,7 +81,15 @@ def parse_symbol(security: str) -> str:
     return re.sub(r"[^A-Za-z0-9.\-]", "", token[0]).upper()
 
 
-def security_kind(security: str) -> str | None:
+def security_kind(security: str, stype_description: str = "") -> str | None:
+    type_text = f" {str(stype_description or '').strip().lower()} "
+    if re.search(r"\bfutures?\b", type_text):
+        return "future"
+    if re.search(r"\b(options?|calls?|puts?)\b", type_text):
+        return "option"
+    if re.search(r"\b(equity|stock|shares?)\b", type_text):
+        return "stock"
+
     text = f" {str(security or '').strip().lower()} "
     if " curncy" in text or " index" in text or " cmdty" in text:
         return None
@@ -467,21 +475,43 @@ def build_pretrade_stock_context(item: dict, fmp_api_key: str) -> dict:
     return context
 
 
+def build_pretrade_futures_context(item: dict, fmp_api_key: str) -> dict | None:
+    product = resolve_futures_product(item.get("security", ""))
+    if product.get("mappingStatus") != "mapped":
+        return None
+    facts = build_derivative_facts(
+        item,
+        fmp_api_key,
+        "future",
+        str(product.get("marketDataSymbol") or product.get("productRoot") or ""),
+    )
+    technical = facts.get("technicalDataAvailableBeforeTradeDate") or {}
+    if not technical:
+        return None
+    return {
+        "dataCutoffDate": facts.get("trade", {}).get("dataCutoffDate", ""),
+        "marketDataSymbol": technical.get("underlyingSymbolUsed") or product.get("marketDataSymbol", ""),
+        "technical": technical,
+    }
+
+
 def enrich_pretrade_reason_items(items: list[dict], fmp_api_key: str) -> list[dict]:
     enriched = []
     for item in items:
         clean_item = dict(item)
         clean_item.pop("stockContext", None)
+        clean_item.pop("futuresTechnicalContext", None)
         enriched.append(clean_item)
     if not fmp_api_key:
         return enriched
 
-    grouped: dict[tuple[str, str], list[int]] = {}
+    grouped: dict[tuple[str, str, str], list[int]] = {}
     for position, item in enumerate(enriched):
-        if str(item.get("kind", "")).lower() != "stock" or not is_open_position_type(item.get("type", "")):
+        kind = str(item.get("kind", "")).lower()
+        if kind not in {"stock", "future"} or not is_open_position_type(item.get("type", "")):
             continue
-        key = (parse_symbol(item.get("security", "")), str(item.get("tradeDate", "")))
-        if key[0] and key[1]:
+        key = (kind, parse_symbol(item.get("security", "")), str(item.get("tradeDate", "")))
+        if key[1] and key[2]:
             grouped.setdefault(key, []).append(position)
 
     if not grouped:
@@ -489,21 +519,22 @@ def enrich_pretrade_reason_items(items: list[dict], fmp_api_key: str) -> list[di
 
     workers = min(PRETRADE_CONTEXT_WORKERS, len(grouped))
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(build_pretrade_stock_context, enriched[positions[0]], fmp_api_key): positions
-            for positions in grouped.values()
-        }
-        for future in as_completed(futures):
-            positions = futures[future]
+        jobs = {}
+        for (kind, _, _), positions in grouped.items():
+            builder = build_pretrade_stock_context if kind == "stock" else build_pretrade_futures_context
+            jobs[executor.submit(builder, enriched[positions[0]], fmp_api_key)] = (kind, positions)
+        for future in as_completed(jobs):
+            kind, positions = jobs[future]
             try:
                 context = future.result()
             except Exception as exc:
                 security = enriched[positions[0]].get("security", "unknown security")
-                print(f"Pre-trade stock context unavailable for {security}: {exc}", file=sys.stderr)
+                print(f"Pre-trade {kind} context unavailable for {security}: {exc}", file=sys.stderr)
                 continue
             if context:
+                context_key = "stockContext" if kind == "stock" else "futuresTechnicalContext"
                 for position in positions:
-                    enriched[position]["stockContext"] = context
+                    enriched[position][context_key] = context
     return enriched
 
 
@@ -677,6 +708,7 @@ def build_directional_futures_reason(item: dict, futures_overrides: object = Non
     product_label = f"{product['productName']} ({product['productRoot']})"
     market_exposure = product["marketExposure"]
     volatility_risk = product["volatilityRisk"]
+    technical_sentence = build_futures_technical_sentence(item, is_buy)
 
     if is_buy:
         portfolio_effect = (
@@ -689,11 +721,46 @@ def build_directional_futures_reason(item: dict, futures_overrides: object = Non
             f"{market_exposure} without changing individual holdings."
         )
 
-    return (
+    reason = (
         f"I plan to {action} {security} to establish {direction} exposure through {product_label}. "
-        f"{portfolio_effect} "
+        f"{technical_sentence or portfolio_effect} "
         f"I will monitor leverage, {volatility_risk}, margin requirements, and contract expiry."
     )
+    return reason
+
+
+def build_futures_technical_sentence(item: dict, is_buy: bool) -> str:
+    context = item.get("futuresTechnicalContext") or {}
+    technical = context.get("technical") or {}
+    as_of_date = str(technical.get("date") or "")
+    try:
+        cutoff_date = (parse_trade_date(item.get("tradeDate", "")) - timedelta(days=1)).strftime("%Y-%m-%d")
+    except ValueError:
+        return ""
+    if not as_of_date or as_of_date > cutoff_date:
+        return ""
+
+    vs_sma20 = optional_float(technical.get("closeVsSma20Pct"))
+    vs_sma50 = optional_float(technical.get("closeVsSma50Pct"))
+    rsi14 = optional_float(technical.get("rsi14"))
+    signals = [value for value in (vs_sma20, vs_sma50) if value is not None]
+    if rsi14 is not None:
+        signals.append(rsi14 - 50)
+    if len(signals) < 2:
+        return ""
+
+    score = sum(1 if value > 0 else -1 if value < 0 else 0 for value in signals)
+    symbol = str(context.get("marketDataSymbol") or "the underlying market").strip()
+    if score >= 2:
+        signal_text = "indicated upward momentum"
+        alignment = "supporting the Directional Long position" if is_buy else "which I will monitor as a risk to the Directional Short position"
+    elif score <= -2:
+        signal_text = "indicated downward momentum"
+        alignment = "which I will monitor as a risk to the Directional Long position" if is_buy else "supporting the Directional Short position"
+    else:
+        signal_text = "gave a mixed directional signal"
+        alignment = "so I will monitor confirmation of the trade direction"
+    return f"As of {as_of_date}, the moving-average and RSI indicators for {symbol} {signal_text}, {alignment}."
 
 
 # Index futures rarely return EOD data under their own/root symbol on FMP.
@@ -939,6 +1006,7 @@ def classify_transactions(items: list[dict], gemini_api_key: str, futures_overri
             "index": index,
             "security": str(item.get("security", "")),
             "description": str(item.get("description", "")),
+            "stypeDescription": str(item.get("stypeDescription", "")),
         }
         for index, item in enumerate(items)
     ]
@@ -982,27 +1050,37 @@ def classify_transactions(items: list[dict], gemini_api_key: str, futures_overri
             "responseSchema": schema,
         },
     }
-    response = http_json(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
-        headers={"x-goog-api-key": gemini_api_key},
-        data=body,
-        timeout=70,
-    )
-    text = "\n".join(part.get("text", "") for part in response["candidates"][0]["content"]["parts"])
-    parsed = json.loads(text)
-
     by_index = {}
-    for row in parsed.get("rows", []):
+    needs_ai = False
+    for item in items:
+        rule_kind = security_kind(item.get("security", ""), item.get("stypeDescription", ""))
+        product = resolve_futures_product(item.get("security", ""), futures_overrides)
+        if rule_kind is None and not product.get("contractMonth"):
+            needs_ai = True
+            break
+    if needs_ai and gemini_api_key:
         try:
-            by_index[int(row.get("index"))] = row
-        except (TypeError, ValueError):
-            continue
+            response = http_json(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
+                headers={"x-goog-api-key": gemini_api_key},
+                data=body,
+                timeout=70,
+            )
+            text = "\n".join(part.get("text", "") for part in response["candidates"][0]["content"]["parts"])
+            parsed = json.loads(text)
+            for row in parsed.get("rows", []):
+                try:
+                    by_index[int(row.get("index"))] = row
+                except (TypeError, ValueError):
+                    continue
+        except Exception as exc:
+            print(f"Gemini classification unavailable; deterministic rules retained: {exc}", file=sys.stderr)
 
     results = []
     for index, item in enumerate(items):
         row = by_index.get(index, {})
         kind = row.get("kind")
-        rule_kind = security_kind(item.get("security", ""))
+        rule_kind = security_kind(item.get("security", ""), item.get("stypeDescription", ""))
         if rule_kind in {"stock", "option", "future"}:
             kind = rule_kind
         elif kind not in {"stock", "option", "future"}:
@@ -1011,7 +1089,8 @@ def classify_transactions(items: list[dict], gemini_api_key: str, futures_overri
         futures_product = resolve_futures_product(item.get("security", ""), futures_overrides)
         text_hint = f"{item.get('security', '')} {item.get('description', '')}".lower()
         is_future = (
-            kind == "future"
+            rule_kind == "future"
+            or kind == "future"
             or " future" in f" {text_hint}"
             or bool(futures_product.get("contractMonth"))
         )
@@ -1073,13 +1152,17 @@ def generate_pretrade_reasons(
         },
         "required": ["rows"],
     }
+    model_rows = [
+        row for row in rows
+        if not (row.get("kind", "").lower() == "future" and is_open_position_type(row.get("type", "")))
+    ]
     prompt = (
         "You are selecting locked pre-trade evidence and preparing concise English support text for internal fund compliance records.\n"
         "For every open stock trade, inspect only stockContext.evidence and return exactly one evidenceId from that list whose stance best supports the BUY or SELL direction. Never invent or alter an evidence ID. Set reason to an empty string for stock trades because the backend will compose the final wording from the locked evidence statement.\n"
         "If a stock trade has no evidence, return an empty evidenceId and an empty reason. Never introduce earnings announcements, news, analyst views, market expectations, events, figures, dates, or company claims.\n"
         "For option trades only, set evidenceId to an empty string and write 2-3 first-person professional sentences using only the submitted transaction fields. Futures reasons are composed deterministically by the backend as Directional Long or Directional Short and any model-written futures reason will be ignored. Use BUY and SELL. Do not mention quantity, price, proposed price range, data vendors, JSON field names, unprovided events, analyst ratings, price targets, or news.\n"
         "Keep all wording neutral and suitable for an internal compliance record, not investment advice to outside investors.\n\n"
-        f"Data JSON:\n{json.dumps(rows, ensure_ascii=False)}"
+        f"Data JSON:\n{json.dumps(model_rows, ensure_ascii=False)}"
     )
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -1090,14 +1173,19 @@ def generate_pretrade_reasons(
             "responseSchema": schema,
         },
     }
-    response = http_json(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
-        headers={"x-goog-api-key": gemini_api_key},
-        data=body,
-        timeout=70,
-    )
-    text = "\n".join(part.get("text", "") for part in response["candidates"][0]["content"]["parts"])
-    parsed = json.loads(text)
+    parsed = {"rows": []}
+    if model_rows and gemini_api_key:
+        try:
+            response = http_json(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
+                headers={"x-goog-api-key": gemini_api_key},
+                data=body,
+                timeout=70,
+            )
+            text = "\n".join(part.get("text", "") for part in response["candidates"][0]["content"]["parts"])
+            parsed = json.loads(text)
+        except Exception as exc:
+            print(f"Gemini reason selection unavailable; deterministic reasons retained: {exc}", file=sys.stderr)
 
     ai_rows = {}
     for row in parsed.get("rows", []):
@@ -1222,11 +1310,9 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(items, list) or not items:
                 raise ValueError("No transactions to classify.")
             env = load_env()
-            if not env.get("GEMINI_API_KEY"):
-                raise RuntimeError("Server API keys are not configured.")
             results = classify_transactions(
                 items,
-                env["GEMINI_API_KEY"],
+                env.get("GEMINI_API_KEY", ""),
                 payload.get("futuresOverrides"),
             )
             json_response(self, 200, {"results": results})
@@ -1246,12 +1332,10 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(items, list) or not items:
                 raise ValueError("No transactions for reason generation.")
             env = load_env()
-            if not env.get("GEMINI_API_KEY"):
-                raise RuntimeError("Server API keys are not configured.")
             enriched_items = enrich_pretrade_reason_items(items, env.get("FMP_API_KEY", ""))
             results = generate_pretrade_reasons(
                 enriched_items,
-                env["GEMINI_API_KEY"],
+                env.get("GEMINI_API_KEY", ""),
                 payload.get("futuresOverrides"),
             )
             json_response(self, 200, {"results": results})

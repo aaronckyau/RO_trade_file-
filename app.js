@@ -325,6 +325,13 @@ function mapTransaction(headers, row) {
     tradeDate: formatExcelDate(get("TRADE_DATE", "Trade Date")),
     settleDate: formatExcelDate(get("SETTLEMENT_DATE", "Settlement Date", "Settle Date")),
     type: mapTradeType(tradeTypeRaw),
+    stypeDescription: cleanText(get(
+      "STYPE_DESCRIPTION",
+      "STYPE DESCRIPTION",
+      "Security Type Description",
+      "Security Type",
+      "Asset Type"
+    )),
     security: cleanText(get("SNAME", "Security", "Security Code", "Ticker")),
     description: cleanText(get("sec_description", "description", "Description")),
     qty: formatNumber(get("TSNUMBER", "Quantity", "Qty")),
@@ -640,6 +647,11 @@ function isOpenPosition(transaction) {
 }
 
 function securityKind(transaction) {
+  const typeDescription = ` ${cleanText(transaction.stypeDescription).toLowerCase()} `;
+  if (/\bfutures?\b/.test(typeDescription)) return "future";
+  if (/\b(options?|calls?|puts?)\b/.test(typeDescription)) return "option";
+  if (/\b(equity|stock|shares?)\b/.test(typeDescription)) return "stock";
+
   const security = ` ${cleanText(transaction.security).toLowerCase()} `;
   if (security.includes(" curncy") || security.includes(" index") || security.includes(" cmdty")) {
     return null;
@@ -769,7 +781,11 @@ function applyFuturesProduct(transaction, product) {
 }
 
 async function classifyTransactions() {
-  const items = state.transactions.map((t) => ({ security: t.security, description: t.description }));
+  const items = state.transactions.map((t) => ({
+    security: t.security,
+    description: t.description,
+    stypeDescription: t.stypeDescription
+  }));
   if (!items.length) return;
   setStrategyStatus("正在用 AI 判斷證券型別與標的...");
   try {
@@ -1211,7 +1227,7 @@ async function ensurePreTradeReasonsFor(candidates) {
   }
 
   candidates.forEach(({ transaction }) => {
-    const deterministicReason = buildClosePositionReason(transaction) || buildDirectionalFuturesReason(transaction);
+    const deterministicReason = buildClosePositionReason(transaction);
     if (deterministicReason) transaction.reason = deterministicReason;
   });
   const missing = candidates.filter(({ transaction }) => !cleanText(transaction.reason));
@@ -1238,7 +1254,8 @@ async function ensurePreTradeReasonsFor(candidates) {
             gross: transaction.gross,
             counterpart: transaction.counterpart,
             kind: resolvedKind(transaction) || "unsupported",
-            underlyingSymbol: transaction.underlyingSymbol || ""
+            underlyingSymbol: transaction.underlyingSymbol || "",
+            stypeDescription: transaction.stypeDescription || ""
           })),
           futuresOverrides: state.futuresOverrides
         })

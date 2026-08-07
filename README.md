@@ -9,6 +9,8 @@ Local web app for generating RO transaction order PDF forms from uploaded Excel 
 - Configure fund/entity name, executed-by details, RO review details, dates, signatures, and notes
 - Export daily pre-trade and post-trade PDF or Word report bundles
 - Resolve supported futures contract roots through a server-side product registry
+- Prefer Excel `STYPE_DESCRIPTION` for deterministic stock, option, and futures classification
+- Support futures reasons with moving-average and RSI signals dated before the trade
 - Block unknown futures codes until a validated Settings override is supplied
 
 ## Usage
